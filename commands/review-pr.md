@@ -54,7 +54,7 @@ Review a GitHub pull request with parallel agents, fix findings, and push.
 
 7. **Commit and push fixes**
    ```bash
-   git add -A
+   git add -u  # Stage only modified tracked files, never use git add -A
    git commit -m "fix: address PR review findings"
    git push
    ```

@@ -10,7 +10,7 @@ set -euo pipefail
 
 CMD=$(jq -r '.tool_input.command')
 
-if echo "$CMD" | grep -qE 'git[[:space:]]+push.*(main|master)'; then
+if echo "$CMD" | grep -qE 'git[[:space:]]+push[[:space:]]+[a-zA-Z_-]+[[:space:]]+(main|master)([[:space:]]|$)'; then
     echo 'BLOCKED: Use feature branches, not direct push to main' >&2
     exit 2
 fi

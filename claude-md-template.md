@@ -2,7 +2,7 @@
 
 Global instructions for all projects. Project-specific CLAUDE.md files override these defaults.
 
-Prefer Exa AI (mcp__exa__web_search_exa) over WebSearch for all web searches.
+Prefer Exa AI (mcp__exa__web_search_exa) over WebSearch for web searches when available. Fall back to WebSearch if Exa is not configured.
 Use skills proactively when they match the task -- suggest relevant ones, don't block on them.
 
 ## Philosophy

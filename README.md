@@ -7,9 +7,13 @@ Claude Code configuration defaults. Covers sandboxing, permissions, hooks, skill
 ```bash
 git clone https://github.com/millsmillsymills/claude-defaults.git
 cd claude-defaults
+./scripts/install.sh          # Install all components
+./scripts/validate.sh         # Verify installation
 ```
 
-Then copy the components you want (see sections below). Run the setup again after pulling updates.
+The install script is idempotent -- it merges settings into existing config, substitutes API keys from environment variables, and skips files that already exist. Use `--dry-run` to preview changes, `--force` to overwrite existing files, or pass specific components (`settings`, `mcp`, `claude-md`, `statusline`, `commands`, `hooks`).
+
+For manual setup or selective installation, see the sections below.
 
 ## Shell Setup
 
@@ -318,12 +322,14 @@ claude-defaults/
 ├── mcp-template.json          # MCP server config template
 ├── claude-md-template.md      # Global CLAUDE.md template
 ├── scripts/
+│   ├── install.sh             # Idempotent installer (--dry-run, --force, components)
+│   ├── validate.sh            # Post-install verification
 │   └── statusline.sh          # Two-line terminal status bar
 ├── hooks/
-│   ├── block-rm-rf.sh         # PreToolUse: block rm -rf
-│   ├── block-push-main.sh     # PreToolUse: block push to main
-│   ├── enforce-package-manager.sh  # PreToolUse: enforce pnpm/yarn
-│   └── log-bash-commands.sh   # PostToolUse: audit log
+│   ├── block-rm-rf.sh         # PreToolUse: block rm -rf (active in settings.json)
+│   ├── block-push-main.sh     # PreToolUse: block push to main (active in settings.json)
+│   ├── enforce-package-manager.sh  # PreToolUse: enforce pnpm/yarn (manual setup)
+│   └── log-bash-commands.sh   # PostToolUse: audit log (manual setup)
 └── commands/
     ├── review-pr.md           # /review-pr <number>
     ├── fix-issue.md           # /fix-issue <number>
