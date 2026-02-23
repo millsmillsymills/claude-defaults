@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# PreToolUse hook: blocks rm -rf commands, suggests trash instead.
+# Wire up in settings.json PreToolUse -> Bash matcher.
+#
+# Exit codes:
+#   0 = allow
+#   2 = block (error message fed back to Claude)
+
+CMD=$(jq -r '.tool_input.command')
+
+if echo "$CMD" | grep -qE 'rm[[:space:]]+-[^[:space:]]*r[^[:space:]]*f'; then
+    echo 'BLOCKED: Use trash instead of rm -rf' >&2
+    exit 2
+fi
