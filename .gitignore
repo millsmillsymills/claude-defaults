@@ -3,3 +3,4 @@
 *.pem
 .DS_Store
 .claude/settings.local.json
+.compound-engineering/*.local.yaml
