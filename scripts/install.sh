@@ -143,7 +143,13 @@ install_settings() {
                     ($existing.permissions.allow // []) +
                     ($new.permissions.allow // []) | unique
                 ) |
-                .hooks = ($existing.hooks // {}) * ($new.hooks // {})
+                .hooks = (
+                    ($existing.hooks // {}) as $eh |
+                    ($new.hooks // {}) as $nh |
+                    reduce ((($eh | keys) + ($nh | keys)) | unique[]) as $event ({};
+                        .[$event] = (($eh[$event] // []) + ($nh[$event] // []))
+                    )
+                )
             ' "$backup_target" "${REPO_DIR}/settings.json" > "${target}.tmp"
             # Validate before atomic rename
             jq . < "${target}.tmp" >/dev/null

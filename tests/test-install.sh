@@ -63,6 +63,39 @@ bash "$REPO_DIR/scripts/uninstall.sh" >/dev/null || fail_msg "uninstall.sh exite
 got=$(jq -r '.hooks // "none"' "$TEST_HOME/.claude/settings.json")
 [ "$got" = "none" ] || [ "$got" = "null" ] || fail_msg "settings.json hooks block not removed by uninstall"
 
+# P1-2: User's existing custom hooks survive merge.
+TEST_HOME2=$(mktemp -d -t claude-defaults-userhook.XXXXXX)
+HOME2_OLD="$HOME"
+export HOME="$TEST_HOME2"
+mkdir -p "$TEST_HOME2/.claude"
+cat > "$TEST_HOME2/.claude/settings.json" <<'PRE'
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "enabledPlugins": {"foo@bar": true},
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "echo MY-CUSTOM-HOOK"}]
+      }
+    ]
+  }
+}
+PRE
+
+bash "$REPO_DIR/scripts/install.sh" >/dev/null || fail_msg "install with custom hooks exited non-zero"
+
+# User's custom hook must survive the merge
+got=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command // ""' "$TEST_HOME2/.claude/settings.json" | grep -c 'MY-CUSTOM-HOOK')
+[ "$got" -ge 1 ] || fail_msg "P1-2: user custom hook lost in merge (count=$got)"
+
+# Repo's hooks must also be present
+got=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command // ""' "$TEST_HOME2/.claude/settings.json" | grep -c 'safety-block.sh')
+[ "$got" -ge 1 ] || fail_msg "P1-2: repo's safety-block.sh missing after merge (count=$got)"
+
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME2"
+
 if [ "$fail" -eq 0 ]; then
     echo "test-install: PASS"
 else
