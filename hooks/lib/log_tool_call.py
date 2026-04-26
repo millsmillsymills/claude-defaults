@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Consolidated PreToolUse + PostToolUse logger for claude-defaults.
 
-Replaces the bash + 4-jq + 5-python3 + redact.py + jsonl-write.py pipeline
+Replaces the bash + 4-jq + 5-python3 + redact.py + jsonl_write.py pipeline
 with a single python3 invocation per tool call. Same on-disk schema as the
 bash version; same redaction patterns; same temp-file pairing.
 
@@ -10,6 +10,10 @@ Usage: log_tool_call.py {pre|post}
 
 Logging failures NEVER break a tool call -- all errors caught and swallowed,
 exit 0 unconditionally on failure paths.
+
+Patterns + truncation + atomic-append all live in `_log_core.py` so the
+three callers (this file, redact.py, jsonl_write.py) share one source of
+truth.
 
 Compatible with Python 3.9+ (relies on PEP 563 deferred annotations).
 """
@@ -25,85 +29,16 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Make sibling-module imports work when this script is invoked through a
+# symlink (e.g. ~/.claude/hooks/lib/log_tool_call.py -> repo path).
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
-# ---------------------------------------------------------------------------
-# Redaction patterns (kept in sync with hooks/lib/redact.py)
-# ---------------------------------------------------------------------------
-_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"eyJ[A-Za-z0-9_\-]{4,}\.eyJ[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}"),
-     "***JWT***"),
-    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "***AWS_KEY***"),
-    (re.compile(r"\bgh[opsu]_[A-Za-z0-9]{36,}\b"), "***GH_TOKEN***"),
-    (re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{8,}\b"), "***ANTHROPIC_KEY***"),
-    (re.compile(r"\bsk-[A-Za-z0-9]{40,80}\b"), "***OPENAI_KEY***"),
-    (re.compile(
-        r"(?i)\b(password|passwd|secret|token|api[_-]?key)"
-        r"(\s*[:=]\s*)([^\s,;'\"]{3,})"
-    ), r"\1\2***"),
-    (re.compile(
-        r"(?i)\b(authorization|bearer)"
-        r"(\s*[:=]\s*|\s+)([^*,;'\"\r\n]{3,})"
-    ), r"\1\2***"),
-    (re.compile(
-        r"(--(?:password|token|secret|api[_-]?key))(=)([^\s,;'\"]{3,})"
-    ), r"\1\2***"),
-]
-
-
-def _redact_value(v):
-    if isinstance(v, str):
-        for pat, repl in _PATTERNS:
-            v = pat.sub(repl, v)
-        return v
-    if isinstance(v, list):
-        return [_redact_value(x) for x in v]
-    if isinstance(v, dict):
-        return {k: _redact_value(val) for k, val in v.items()}
-    return v
-
-
-# ---------------------------------------------------------------------------
-# JSONL write with truncation (kept in sync with hooks/lib/jsonl-write.py)
-# ---------------------------------------------------------------------------
-DEFAULT_MAX_LINE = 1024 * 1024  # 1 MB
-
-
-def _truncate_output(obj: dict, max_bytes: int) -> dict:
-    serialized = json.dumps(obj, ensure_ascii=False)
-    overhead = len((serialized + "\n").encode("utf-8")) - max_bytes
-    if overhead <= 0:
-        return obj
-    output = obj.get("output")
-    if not isinstance(output, dict):
-        return obj
-    truncated_total = 0
-    for key in ("stdout", "stderr"):
-        v = output.get(key)
-        if not isinstance(v, str):
-            continue
-        encoded = v.encode("utf-8")
-        if len(encoded) <= 256:
-            continue
-        keep = max(256, len(encoded) - max(0, overhead - truncated_total))
-        if keep < len(encoded):
-            output[key] = encoded[:keep].decode("utf-8", errors="replace")
-            truncated_total += len(encoded) - keep
-        serialized = json.dumps(obj, ensure_ascii=False)
-        if len((serialized + "\n").encode("utf-8")) <= max_bytes:
-            break
-    if truncated_total > 0:
-        output["_truncated_bytes"] = truncated_total
-    return obj
-
-
-def _atomic_append(path: str, obj: dict) -> None:
-    line = (json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8")
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
-    try:
-        os.write(fd, line)
-    finally:
-        os.close(fd)
+from _log_core import (  # noqa: E402
+    DEFAULT_MAX_LINE,
+    atomic_append,
+    redact_value,
+    truncate_output,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +123,7 @@ def main() -> int:
             "call_id": _call_id(),
             "tool": tool,
             "mcp_server": mcp_server,
-            "args": _redact_value(tool_input),
+            "args": redact_value(tool_input),
         }
     else:
         # Post: pair by content hash. Fall back to most-recent same-session
@@ -247,12 +182,12 @@ def main() -> int:
             "mcp_server": mcp_server,
             "exit_status": exit_status,
             "duration_ms": duration_ms,
-            "output": _redact_value(tool_response),
+            "output": redact_value(tool_response),
         }
 
-    payload = _truncate_output(payload, _max_line_bytes())
+    payload = truncate_output(payload, _max_line_bytes())
     try:
-        _atomic_append(log_file, payload)
+        atomic_append(log_file, payload)
     except OSError as exc:
         if exc.errno == errno.ENOSPC:
             return 0

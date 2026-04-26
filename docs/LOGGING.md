@@ -69,7 +69,7 @@ Patterns auto-stripped before write (see `hooks/lib/redact.py`):
 | `password=`, `token=`, `secret=`, `api_key=`, `bearer:`, `authorization:` | value `***` |
 | `--password=`, `--token=`, `--secret=`, `--api-key=` | value `***` |
 
-If you need to add a pattern, edit BOTH `hooks/lib/redact.py`'s `_PATTERNS` list AND `hooks/lib/log_tool_call.py`'s `_PATTERNS` list (the live logging pipeline uses `log_tool_call.py`'s copy; `redact.py` is the canonical reference). Add a case to `tests/test-redaction.sh`. A future PR will extract these to a shared module and eliminate the duplication. To re-redact older logs after adding a pattern, run `python3 scripts/redact-existing-logs.py <log-file>` (one-off; not auto-installed).
+If you need to add a pattern, edit `hooks/lib/_log_core.py`'s `_PATTERNS` list — it's the single source of truth, imported by all three callers (`redact.py` CLI, `jsonl_write.py` CLI, and the live `log_tool_call.py` logging pipeline). Add a case to `tests/test-redaction.sh`. To re-redact older logs after adding a pattern, run `python3 scripts/redact-existing-logs.py <log-file>` (one-off; not auto-installed).
 
 ## Rotation policy
 
@@ -126,7 +126,7 @@ jq -r 'select(.event=="pre" and (.tool=="Edit" or .tool=="Write")) | .args.file_
 
 ## Atomicity & failure modes
 
-- Writes use a single `O_APPEND` syscall via `hooks/lib/jsonl-write.py`. Atomic on macOS APFS for line sizes ≤ 1 MB (the truncation cap).
+- Writes use a single `O_APPEND` syscall (via the helpers in `hooks/lib/_log_core.py`, exposed by both `hooks/lib/jsonl_write.py` and `hooks/lib/log_tool_call.py`). Atomic on macOS APFS for line sizes ≤ 1 MB (the truncation cap).
 - Lines exceeding 1 MB get `output.stdout`/`output.stderr` truncated with `_truncated_bytes` marker.
 - `ENOSPC` (disk full) silently drops the line; never breaks the user's tool call.
 - All write errors wrapped in `|| true` from the bash side. Logging cannot break Claude Code.

@@ -353,8 +353,10 @@ claude-defaults/
 │   ├── log-tool-calls.sh           # NEW: rich JSONL log of every tool call (active)
 │   ├── log-rotate.sh               # NEW: SessionEnd gzip+prune (active)
 │   └── lib/
-│       ├── redact.py               # secret-pattern redaction
-│       ├── jsonl-write.py          # atomic JSONL append + truncation
+│       ├── _log_core.py            # shared patterns + truncation + atomic append
+│       ├── redact.py               # secret-pattern redaction CLI (uses _log_core)
+│       ├── jsonl_write.py          # atomic JSONL append + truncation CLI
+│       ├── log_tool_call.py        # consolidated pre/post logger (uses _log_core)
 │       └── common.sh               # shared bash helpers
 ├── commands/
 │   ├── review-pr.md                # /review-pr <number>
