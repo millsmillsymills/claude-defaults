@@ -10,7 +10,7 @@ Patterns covered:
   - AWS access keys (AKIA + 16 chars)
   - GitHub personal/OAuth/server/user tokens (gh[opsu]_...)
   - Anthropic API keys (sk-ant-...)
-  - OpenAI API keys (sk-... 48 chars)
+  - OpenAI API keys (sk-... 40-80 chars)
   - key=value with key in {password, passwd, secret, token, api_key, api-key,
     bearer, authorization}
   - --flag=value with flag in {password, token, secret, api-key, api_key}
@@ -34,10 +34,19 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{8,}\b"), "***ANTHROPIC_KEY***"),
     # OpenAI keys (sk- followed by 40+ base62 chars; bounded)
     (re.compile(r"\bsk-[A-Za-z0-9]{40,80}\b"), "***OPENAI_KEY***"),
-    # key=value secrets (case-insensitive key)
+    # key=value secrets where value is a single shell/URL token (no internal whitespace)
     (re.compile(
-        r"(?i)\b(password|passwd|secret|token|api[_-]?key|bearer|authorization)"
+        r"(?i)\b(password|passwd|secret|token|api[_-]?key)"
         r"(\s*[:=]\s*)([^\s,;'\"]{3,})"
+    ), r"\1\2***"),
+    # Header-style: Authorization: <scheme> <credential...>; Bearer <token>
+    # Value class allows internal spaces; stops at line/quote/comma/semicolon.
+    # Separator may be ':', '=', or whitespace alone (e.g. `Bearer abc`).
+    # Value class excludes '*' so we don't re-match earlier-redacted markers
+    # (e.g. preserve `Bearer ***JWT***` -> `Bearer ***`).
+    (re.compile(
+        r"(?i)\b(authorization|bearer)"
+        r"(\s*[:=]\s*|\s+)([^*,;'\"\r\n]{3,})"
     ), r"\1\2***"),
     # --flag=value CLI secrets
     (re.compile(
