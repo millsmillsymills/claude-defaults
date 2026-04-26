@@ -69,7 +69,7 @@ Patterns auto-stripped before write (see `hooks/lib/redact.py`):
 | `password=`, `token=`, `secret=`, `api_key=`, `bearer:`, `authorization:` | value `***` |
 | `--password=`, `--token=`, `--secret=`, `--api-key=` | value `***` |
 
-If you need to add a pattern, edit `hooks/lib/redact.py`'s `_PATTERNS` list and add a case to `tests/test-redaction.sh`. To re-redact older logs after adding a pattern, run `python3 scripts/redact-existing-logs.py <log-file>` (one-off; not auto-installed).
+If you need to add a pattern, edit BOTH `hooks/lib/redact.py`'s `_PATTERNS` list AND `hooks/lib/log_tool_call.py`'s `_PATTERNS` list (the live logging pipeline uses `log_tool_call.py`'s copy; `redact.py` is the canonical reference). Add a case to `tests/test-redaction.sh`. A future PR will extract these to a shared module and eliminate the duplication. To re-redact older logs after adding a pattern, run `python3 scripts/redact-existing-logs.py <log-file>` (one-off; not auto-installed).
 
 ## Rotation policy
 
