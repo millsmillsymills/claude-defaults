@@ -116,6 +116,28 @@ echo "$last" | jq -e '.event == "post" and .tool == "Bash" and .exit_status == 0
 echo "$last" | jq -e '.output.stdout == "paired-test\n"' >/dev/null \
     || fail_msg "log-tool-calls.sh post output not captured: $last"
 
+# === call_id pairs across pre/post (P1-1) ===
+echo "  testing call_id pairing"
+cid_input='{
+  "session_id": "cid-test",
+  "cwd": "/tmp",
+  "tool_name": "Bash",
+  "tool_input": {"command": "echo cid-pair"}
+}'
+cid_response='{
+  "session_id": "cid-test",
+  "cwd": "/tmp",
+  "tool_name": "Bash",
+  "tool_input": {"command": "echo cid-pair"},
+  "tool_response": {"stdout": "cid-pair\n", "exit_code": 0}
+}'
+echo "$cid_input" | bash hooks/log-tool-calls.sh pre
+sleep 0.03
+echo "$cid_response" | bash hooks/log-tool-calls.sh post
+pre_cid=$(jq -r 'select(.event=="pre" and .session_id=="cid-test") | .call_id' "$log_file" | tail -n 1)
+post_cid=$(jq -r 'select(.event=="post" and .session_id=="cid-test") | .call_id' "$log_file" | tail -n 1)
+[ -n "$pre_cid" ] && [ "$pre_cid" = "$post_cid" ] || fail_msg "call_id mismatch: pre=$pre_cid post=$post_cid"
+
 # === pair-file round-trip test (P1-8) ===
 echo "  testing pair-file round-trip"
 pair_input='{

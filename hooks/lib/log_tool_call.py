@@ -108,10 +108,17 @@ def main() -> int:
     log_file = str(log_dir / f"tool-calls-{datetime.now().strftime('%Y-%m-%d')}.jsonl")
     pair_path = os.path.join(_temp_dir(), f"claude-tool-{_pair_key(session_id, tool_input)}")
 
+    # Generate call_id ONCE per invocation. For pre, write it into the pair
+    # file alongside the start time so post can read it back and the pre-row's
+    # call_id matches its post-row's call_id (the docs/LOGGING.md "join on
+    # call_id" contract). For post, fall back to a fresh call_id only when the
+    # pair file is missing.
+    call_id = _call_id()
+
     if event == "pre":
         try:
             with open(pair_path, "w") as f:
-                f.write(f"{_call_id()} {time.time()}\n")
+                f.write(f"{call_id} {time.time()}\n")
         except OSError:
             pass
 
@@ -120,7 +127,7 @@ def main() -> int:
             "session_id": session_id,
             "cwd": cwd,
             "event": "pre",
-            "call_id": _call_id(),
+            "call_id": call_id,
             "tool": tool,
             "mcp_server": mcp_server,
             "args": redact_value(tool_input),
@@ -129,11 +136,13 @@ def main() -> int:
         # Post: pair by content hash. Fall back to most-recent same-session
         # file (handles the case where pre-row was missing).
         start_time = None
+        paired_call_id = None
         if os.path.isfile(pair_path):
             try:
                 with open(pair_path) as f:
                     parts = f.read().split()
                     if len(parts) >= 2:
+                        paired_call_id = parts[0]
                         start_time = float(parts[1])
             except (OSError, ValueError):
                 pass
@@ -154,6 +163,7 @@ def main() -> int:
                         with open(candidates[0]) as f:
                             parts = f.read().split()
                             if len(parts) >= 2:
+                                paired_call_id = parts[0]
                                 start_time = float(parts[1])
                         try:
                             candidates[0].unlink()
@@ -177,7 +187,7 @@ def main() -> int:
             "session_id": session_id,
             "cwd": cwd,
             "event": "post",
-            "call_id": _call_id(),
+            "call_id": paired_call_id or call_id,
             "tool": tool,
             "mcp_server": mcp_server,
             "exit_status": exit_status,
