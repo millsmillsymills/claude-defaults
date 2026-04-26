@@ -146,7 +146,7 @@ install_settings() {
                 .hooks = ($existing.hooks // {}) * ($new.hooks // {})
             ' "$backup_target" "${REPO_DIR}/settings.json" > "${target}.tmp"
             # Validate before atomic rename
-            python3 -m json.tool < "${target}.tmp" >/dev/null
+            jq . < "${target}.tmp" >/dev/null
             mv "${target}.tmp" "$target"
             ok "merged settings into $target"
         else
