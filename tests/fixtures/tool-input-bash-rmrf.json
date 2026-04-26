@@ -1,0 +1,6 @@
+{
+  "session_id": "fix-002",
+  "cwd": "/tmp/test-cwd",
+  "tool_name": "Bash",
+  "tool_input": {"command": "rm -rf /Users/somebody"}
+}

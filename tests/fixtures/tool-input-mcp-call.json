@@ -1,0 +1,6 @@
+{
+  "session_id": "fix-005",
+  "cwd": "/tmp/test-cwd",
+  "tool_name": "mcp__playwright__browser_click",
+  "tool_input": {"selector": "#submit"}
+}
