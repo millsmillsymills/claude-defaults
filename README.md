@@ -225,7 +225,7 @@ Every tool call (including all `mcp__*` invocations) is captured to a structured
 
 - **Where:** `~/.claude/logs/tool-calls-YYYY-MM-DD.jsonl`
 - **Schema, query examples, redaction rules, rotation:** [`docs/LOGGING.md`](docs/LOGGING.md)
-- **Rotation:** `hooks/log-rotate.sh` runs on `SessionEnd` — gzip-rotates files >100 MB, prunes files >90 days old
+- **Rotation:** `hooks/log-rotate.sh` runs on `SessionEnd` — gzip-rotates files >100 MB, prunes files >365 days old (long retention supports cross-session `/ce` analytics)
 - **Redaction:** secrets stripped before write — JWTs, AWS/GitHub/Anthropic/OpenAI keys, `password=`, `token=`, etc. Patterns in `hooks/lib/redact.py`
 
 Logging never breaks a tool call: write failures (disk full, missing dir, malformed JSON) are silently dropped.
