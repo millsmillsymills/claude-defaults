@@ -52,9 +52,15 @@ fi
 call_id=$(python3 -c 'import time, os; print(f"{int(time.time()*1_000_000):d}-{os.getpid()}")')
 ts=$(python3 -c 'import datetime; print(datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00","Z"))')
 
+# Sanitize session_id for use as a filename component (alnum + dash + underscore only).
+session_safe=$(printf '%s' "$session_id" | tr -c 'A-Za-z0-9_-' '_')
+
 if [ "$EVENT" = "pre" ]; then
-    # Capture start time for duration calculation later.
-    echo "$call_id $(python3 -c 'import time; print(time.time())')" > "${TMPDIR:-/tmp}/claude-tool-${call_id}" 2>/dev/null || true
+    # Capture start time keyed by session+call so the post handler only matches
+    # temp files from THIS session — avoids matching stale files left over from
+    # prior sessions or unmatched pre-calls (which would produce wildly inflated
+    # duration_ms values).
+    echo "$call_id $(python3 -c 'import time; print(time.time())')" > "${TMPDIR:-/tmp}/claude-tool-${session_safe}-${call_id}" 2>/dev/null || true
 
     args=$(echo "$INPUT" | jq -c '.tool_input // {}' 2>/dev/null || echo "{}")
     if [ "$mcp_server" = "null" ]; then
@@ -72,19 +78,22 @@ if [ "$EVENT" = "pre" ]; then
         --argjson args "$args" \
         '{ts:$ts, session_id:$sid, cwd:$cwd, event:"pre", call_id:$cid, tool:$tool, mcp_server:$mcp, args:$args}')
 else
-    # Post call.
-    # Find the most recent matching pre-row for this session+tool to compute duration.
-    # Simpler approach: scan recent temp files for the same session and tool that haven't been claimed.
+    # Post call. Find the most-recent matching pre-row for THIS session.
+    # Glob is filtered by session_safe prefix so we never match stale files
+    # from previous sessions; ls -t orders by mtime descending (newest first),
+    # which is the right pairing for serial tool calls within a session.
+    # Concurrent in-flight calls within one session may still mis-pair (the
+    # newest temp file gets consumed regardless of which post triggered the
+    # lookup) — see PR description / docs/LOGGING.md for the known limitation.
     start_file=""
     start_time=""
-    for f in "${TMPDIR:-/tmp}"/claude-tool-*; do
-        [ -f "$f" ] || continue
-        # Match by session if present; else just take the most recent.
-        line=$(cat "$f" 2>/dev/null) || continue
-        start_file="$f"
+    if [ -n "$session_safe" ] && [ "$session_safe" != "unknown" ]; then
+        start_file=$(ls -t "${TMPDIR:-/tmp}"/claude-tool-"${session_safe}"-* 2>/dev/null | head -n 1)
+    fi
+    if [ -n "$start_file" ] && [ -f "$start_file" ]; then
+        line=$(cat "$start_file" 2>/dev/null)
         start_time=$(echo "$line" | awk '{print $2}')
-        break
-    done
+    fi
     if [ -n "$start_time" ]; then
         end_time=$(python3 -c 'import time; print(time.time())')
         duration_ms=$(python3 -c "print(int(($end_time - $start_time) * 1000))")
