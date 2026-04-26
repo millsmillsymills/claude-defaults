@@ -15,13 +15,20 @@ run_redact() {
 declare -a cases=(
     'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.AbCdEfGh|***JWT***|eyJhbGciOiJIUzI1NiJ9'
     'AKIAIOSFODNN7EXAMPLE|***AWS_KEY***|AKIAIOSFODNN7EXAMPLE'
-    'ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|***GH_TOKEN***|ghp_aaaaaaaaa'
+    'ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|***GH_TOKEN***|ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
     'sk-ant-api03-xyzABC123|***ANTHROPIC_KEY***|sk-ant-api03'
     'sk-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|***OPENAI_KEY***|sk-aaaaaaaaaaaaaaaaaaaa'
     'password=hunter2|password=***|hunter2'
     'TOKEN=secret-value|TOKEN=***|secret-value'
     '--token=mytoken|--token=***|mytoken'
     'Authorization: Bearer xyz|Authorization: ***|Bearer xyz'
+    # P1-4: extended patterns (compound env vars, URL userinfo, GH PATs, AWS STS)
+    'export DB_PASSWORD=hunter2|DB_PASSWORD=***|hunter2'
+    'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY|AWS_SECRET_ACCESS_KEY=***|wJalrXUtnFEMI'
+    'APP_SECRET_KEY=very-secret-app-key|APP_SECRET_KEY=***|very-secret-app-key'
+    'psql postgresql://admin:SuperSecret123@db.internal/prod|admin:***@|SuperSecret123'
+    'github_pat_11ABCDEFG1234567890abcdefghijklmnop|***GH_PAT***|github_pat_11ABCDEFG'
+    'ASIAIOSFODNN7EXAMPLE|***AWS_STS_KEY***|ASIAIOSFODNN7EXAMPLE'
 )
 
 for c in "${cases[@]}"; do

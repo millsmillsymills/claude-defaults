@@ -45,12 +45,29 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
      "***JWT***"),
     # AWS access key
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "***AWS_KEY***"),
+    # AWS STS temporary credential keys (separate prefix from AKIA)
+    (re.compile(r"\bASIA[0-9A-Z]{16}\b"), "***AWS_STS_KEY***"),
     # GitHub tokens (ghp_, gho_, ghs_, ghu_)
     (re.compile(r"\bgh[opsu]_[A-Za-z0-9]{36,}\b"), "***GH_TOKEN***"),
+    # GitHub fine-grained PATs (different prefix than gh[opsu]_)
+    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{30,}\b"), "***GH_PAT***"),
     # Anthropic API keys
     (re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{8,}\b"), "***ANTHROPIC_KEY***"),
     # OpenAI keys (sk- followed by 40+ base62 chars; bounded)
     (re.compile(r"\bsk-[A-Za-z0-9]{40,80}\b"), "***OPENAI_KEY***"),
+    # URL userinfo passwords: postgresql://user:password@host/db -- redact the
+    # password between : and @ while preserving the user and the host.
+    (re.compile(r"(://[^:@\s/]+):([^@\s]{4,})@"), r"\1:***@"),
+    # Compound SCREAMING_SNAKE env vars: DB_PASSWORD=, APP_SECRET_KEY=,
+    # AWS_SECRET_ACCESS_KEY=. The previous \b-anchored pattern misses these
+    # because _ is a word character (no boundary before "PASSWORD").
+    # Require `_` before the suffix word to avoid matches inside ordinary
+    # words (e.g. MONKEY, BUCKET, TICKET would otherwise hit "KEY"/"TOKEN").
+    (re.compile(
+        r"([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*"
+        r"_(?:PASSWORD|PASSWD|SECRET|TOKEN|KEY|PAT|CREDENTIAL|CREDENTIALS|AUTH))"
+        r"(\s*=\s*)([^\s,;'\"]{3,})"
+    ), r"\1\2***"),
     # key=value secrets where value is a single shell/URL token (no internal whitespace)
     (re.compile(
         r"(?i)\b(password|passwd|secret|token|api[_-]?key)"
