@@ -10,7 +10,10 @@ set -euo pipefail
 
 CMD=$(jq -r '.tool_input.command')
 
-if echo "$CMD" | grep -qE 'git[[:space:]]+push[[:space:]]+[a-zA-Z_-]+[[:space:]]+(main|master)([[:space:]]|$)'; then
+# Strip quoted strings before pattern matching (see block-rm-rf.sh for rationale).
+SCRUBBED=$(printf '%s' "$CMD" | sed -E 's/"[^"]*"//g' | sed -E "s/'[^']*'//g")
+
+if echo "$SCRUBBED" | grep -qE 'git[[:space:]]+push[[:space:]]+[a-zA-Z_-]+[[:space:]]+(main|master)([[:space:]]|$)'; then
     echo 'BLOCKED: Use feature branches, not direct push to main' >&2
     exit 2
 fi

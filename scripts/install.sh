@@ -114,8 +114,9 @@ install_settings() {
 
     mkdir -p "$CLAUDE_DIR"
     # Idempotency: if the existing settings.json already references our hooks,
-    # treat as already-installed (no re-backup, no re-merge).
-    if [ -f "$target" ] && command -v jq >/dev/null 2>&1; then
+    # treat as already-installed (no re-backup, no re-merge). --force bypasses
+    # this check to support re-merging after settings.json template changes.
+    if [ "$FORCE" != "1" ] && [ -f "$target" ] && command -v jq >/dev/null 2>&1; then
         if jq -r '.. | objects | .command? // empty' "$target" 2>/dev/null \
             | grep -qE 'safety-block\.sh|safety-warn\.sh|log-tool-calls\.sh|log-rotate\.sh'; then
             ok "$target (already merged with claude-defaults hooks — skipping)"
