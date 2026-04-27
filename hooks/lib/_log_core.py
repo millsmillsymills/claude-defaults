@@ -90,14 +90,26 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
 
 
 def redact_string(s: str) -> str:
-    """Run every redaction pattern against `s` in order."""
+    """Run every redaction pattern against `s` in order.
+
+    Patterns are tried in the order they appear in `_PATTERNS`; more-specific
+    patterns (JWT, AWS, GH, etc.) run first so the generic key=value fallback
+    doesn't clobber a structured replacement. Returns the redacted string;
+    leaves non-matching content untouched.
+    """
     for pattern, replacement in _PATTERNS:
         s = pattern.sub(replacement, s)
     return s
 
 
-def redact_value(v):
-    """Recursively walk a JSON-decoded value, redacting strings."""
+def redact_value(v: object) -> object:
+    """Recursively walk a JSON-decoded value, redacting strings.
+
+    Walks dicts, lists, and strings; passes through other JSON scalar types
+    (int, float, bool, None) unchanged. Dict keys are NOT walked (assumed
+    safe; tool-call payloads from Claude Code don't put secrets in keys).
+    Returns a new structure -- the input is not mutated.
+    """
     if isinstance(v, str):
         return redact_string(v)
     if isinstance(v, list):

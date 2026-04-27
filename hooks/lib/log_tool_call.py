@@ -105,7 +105,10 @@ def main() -> int:
 
     mcp_server = _parse_mcp_server(tool)
     log_dir = Path.home() / ".claude" / "logs"
-    log_file = str(log_dir / f"tool-calls-{datetime.now().strftime('%Y-%m-%d')}.jsonl")
+    # Issue #10: filename uses UTC to match the ts field. Otherwise rows
+    # written near local midnight land in a file dated for the previous
+    # local day while the ts field is the next UTC day.
+    log_file = str(log_dir / f"tool-calls-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.jsonl")
     pair_path = os.path.join(_temp_dir(), f"claude-tool-{_pair_key(session_id, tool_input)}")
 
     # Generate call_id ONCE per invocation. For pre, write it into the pair
@@ -117,7 +120,11 @@ def main() -> int:
 
     if event == "pre":
         try:
-            with open(pair_path, "w") as f:
+            # Issue #15 (polish): pair files are created 0o600 (owner-only).
+            # They contain timing + session metadata; no reason for other
+            # local users to read them.
+            fd = os.open(pair_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
                 f.write(f"{call_id} {time.time()}\n")
         except OSError:
             pass
@@ -199,8 +206,13 @@ def main() -> int:
     try:
         atomic_append(log_file, payload)
     except OSError as exc:
-        if exc.errno == errno.ENOSPC:
-            return 0
+        # Issue #8: explicit return 0 for ALL OSError variants (not just
+        # ENOSPC). Logging must never break a tool call regardless of which
+        # filesystem error fires (EACCES after a chown, EROFS after a
+        # remount, etc.). The previous code only returned 0 inside the
+        # ENOSPC branch and relied on Python's None-exit-code coincidence.
+        _ = exc  # explicitly acknowledge we're swallowing all OSErrors
+        return 0
     return 0
 
 
