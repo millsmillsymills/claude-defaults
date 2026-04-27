@@ -113,11 +113,22 @@ install_settings() {
     fi
 
     mkdir -p "$CLAUDE_DIR"
-    # Idempotency: if the existing settings.json already references our hooks,
-    # treat as already-installed (no re-backup, no re-merge). --force bypasses
-    # this check to support re-merging after settings.json template changes.
+    # Idempotency: if the existing settings.json already wires our hooks under
+    # the canonical hook events, treat as already-installed (no re-backup, no
+    # re-merge). --force bypasses this check to support re-merging after
+    # settings.json template changes.
+    #
+    # Issue #15 (polish): narrow scope from the broad `.. | objects | .command?`
+    # walk to specific hook-event paths. The previous walk could false-positive
+    # on any nested object with a `.command` field referencing a hook script
+    # name (e.g. inside a comment field, or in an unrelated config section).
     if [ "$FORCE" != "1" ] && [ -f "$target" ] && command -v jq >/dev/null 2>&1; then
-        if jq -r '.. | objects | .command? // empty' "$target" 2>/dev/null \
+        if jq -r '
+            (.hooks.PreToolUse // [])[]?.hooks[]?.command,
+            (.hooks.PostToolUse // [])[]?.hooks[]?.command,
+            (.hooks.SessionEnd // [])[]?.hooks[]?.command
+            | select(. != null)
+        ' "$target" 2>/dev/null \
             | grep -qE 'safety-block\.sh|safety-warn\.sh|log-tool-calls\.sh|log-rotate\.sh'; then
             ok "$target (already merged with claude-defaults hooks — skipping)"
             return
