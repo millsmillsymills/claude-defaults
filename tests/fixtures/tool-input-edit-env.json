@@ -1,0 +1,6 @@
+{
+  "session_id": "fix-003",
+  "cwd": "/tmp/test-cwd",
+  "tool_name": "Edit",
+  "tool_input": {"file_path": "/Users/me/.env", "old_string": "x", "new_string": "y"}
+}

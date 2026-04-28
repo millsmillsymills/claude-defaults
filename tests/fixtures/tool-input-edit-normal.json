@@ -1,0 +1,6 @@
+{
+  "session_id": "fix-004",
+  "cwd": "/tmp/test-cwd",
+  "tool_name": "Edit",
+  "tool_input": {"file_path": "/tmp/test-cwd/main.py", "old_string": "x", "new_string": "y"}
+}
