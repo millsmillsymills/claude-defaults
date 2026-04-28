@@ -11,7 +11,9 @@ cd claude-defaults
 ./scripts/validate.sh         # Verify installation
 ```
 
-The install script is idempotent -- it merges settings into existing config, substitutes API keys from environment variables, and skips files that already exist. Use `--dry-run` to preview changes, `--force` to overwrite existing files, or pass specific components (`settings`, `mcp`, `claude-md`, `statusline`, `commands`, `hooks`).
+The install script is idempotent and uses a hybrid model: `settings.json` is jq-merged in place (preserves your existing `enabledPlugins`, `extraKnownMarketplaces`, and `skipAutoPermissionPrompt`); everything else (`CLAUDE.md`, `commands/`, `hooks/`, `hooks/lib/`, `agents/`, `skills/`, `statusline.sh`) is symlinked into `~/.claude/` so edits in either place take effect immediately. Skills are symlinked per-skill so existing non-symlink skills (like `agent-browser`) survive untouched. The first install backs up any conflicting files to `~/.claude/backups/pre-claude-defaults-<ts>/`.
+
+Use `--dry-run` to preview changes, `--force` to overwrite foreign symlinks, or pass specific components (`settings`, `mcp`, `claude-md`, `statusline`, `commands`, `hooks`, `agents`, `skills`, `logs-dir`). Run `./scripts/uninstall.sh` to reverse the install (removes our symlinks, restores latest backup).
 
 For manual setup or selective installation, see the sections below.
 
@@ -217,6 +219,21 @@ This uses `type: "prompt"` instead of `type: "command"` -- Claude Code sends the
 
 ---
 
+## Logging
+
+Every tool call (including all `mcp__*` invocations) is captured to a structured JSONL log via `hooks/log-tool-calls.sh`, fired on `PreToolUse *` and `PostToolUse *`. The log includes full tool args and output (capped at 1 MB per line, with a truncation marker), timing, exit status, and the parsed MCP server name when applicable.
+
+- **Where:** `~/.claude/logs/tool-calls-YYYY-MM-DD.jsonl`
+- **Schema, query examples, redaction rules, rotation:** [`docs/LOGGING.md`](docs/LOGGING.md)
+- **Rotation:** `hooks/log-rotate.sh` runs on `SessionEnd` — gzip-rotates files >100 MB, prunes files >365 days old (long retention supports cross-session `/ce` analytics)
+- **Redaction:** secrets stripped before write — JWTs, AWS/GitHub/Anthropic/OpenAI keys, `password=`, `token=`, etc. Patterns in `hooks/lib/redact.py`
+
+Logging never breaks a tool call: write failures (disk full, missing dir, malformed JSON) are silently dropped.
+
+## Anti-rationalization
+
+A `Stop` hook of `type: "prompt"` (configured in `settings.json`) reviews Claude's final response with a fast model and forces continuation if Claude is rationalizing incomplete work ("out of scope," "pre-existing," "follow-up," etc.). Tune the prompt in `settings.json`'s `hooks.Stop[0].hooks[0].prompt` if it's too strict or too lax.
+
 ## Plugins and Skills
 
 Claude Code's capabilities come from plugins, which provide skills (reusable workflows), agents (specialized subagents), and commands (slash commands). Plugins are distributed through marketplaces.
@@ -316,22 +333,46 @@ For each project you work on, add a `CLAUDE.md` at the repo root with project-sp
 
 ```
 claude-defaults/
-├── README.md                  # This file
+├── README.md                       # This file
 ├── LICENSE
-├── settings.json              # Global settings template
-├── mcp-template.json          # MCP server config template
-├── claude-md-template.md      # Global CLAUDE.md template
+├── settings.json                   # Global settings template (merged into ~/.claude/settings.json)
+├── mcp-template.json               # MCP server config template
+├── claude-md-template.md           # Global CLAUDE.md template (Python/TS/Rust/Go/Bash/GH Actions)
 ├── scripts/
-│   ├── install.sh             # Idempotent installer (--dry-run, --force, components)
-│   ├── validate.sh            # Post-install verification
-│   └── statusline.sh          # Two-line terminal status bar
+│   ├── install.sh                  # Hybrid installer (--dry-run, --force, components)
+│   ├── uninstall.sh                # Reverse install, restore backup
+│   ├── validate.sh                 # Verify symlinks, log dir, hooks wired
+│   └── statusline.sh               # Two-line terminal status bar
 ├── hooks/
-│   ├── block-rm-rf.sh         # PreToolUse: block rm -rf (active in settings.json)
-│   ├── block-push-main.sh     # PreToolUse: block push to main (active in settings.json)
-│   ├── enforce-package-manager.sh  # PreToolUse: enforce pnpm/yarn (manual setup)
-│   └── log-bash-commands.sh   # PostToolUse: audit log (manual setup)
-└── commands/
-    ├── review-pr.md           # /review-pr <number>
-    ├── fix-issue.md           # /fix-issue <number>
-    └── merge-dependabot.md    # /merge-dependabot <owner/repo>
+│   ├── block-rm-rf.sh              # legacy: block rm -rf (active)
+│   ├── block-push-main.sh          # legacy: block push to main (active)
+│   ├── enforce-package-manager.sh  # opt-in: enforce pnpm/yarn
+│   ├── log-bash-commands.sh        # opt-in: plain audit log (superseded by log-tool-calls.sh)
+│   ├── safety-block.sh             # NEW: extended destructive-pattern blocks (active)
+│   ├── safety-warn.sh              # NEW: warn on sensitive Edit/Write (active)
+│   ├── log-tool-calls.sh           # NEW: rich JSONL log of every tool call (active)
+│   ├── log-rotate.sh               # NEW: SessionEnd gzip+prune (active)
+│   └── lib/
+│       ├── _log_core.py            # shared patterns + truncation + atomic append
+│       ├── redact.py               # secret-pattern redaction CLI (uses _log_core)
+│       ├── jsonl_write.py          # atomic JSONL append + truncation CLI
+│       ├── log_tool_call.py        # consolidated pre/post logger (uses _log_core)
+│       └── common.sh               # shared bash helpers
+├── commands/
+│   ├── review-pr.md                # /review-pr <number>
+│   ├── fix-issue.md                # /fix-issue <number>
+│   └── merge-dependabot.md         # /merge-dependabot <owner/repo>
+├── agents/                         # scaffold for global agents (empty)
+├── skills/                         # scaffold for global skills (empty)
+├── docs/
+│   ├── HOOKS.md                    # every hook documented
+│   ├── LOGGING.md                  # log schema, queries, rotation
+│   └── PROMOTION-RATIONALE.md      # what was/wasn't promoted from resurgent
+└── tests/
+    ├── run-all.sh                  # dispatcher
+    ├── test-install.sh             # install/uninstall roundtrip
+    ├── test-hooks.sh               # per-hook assertions
+    ├── test-redaction.sh           # secret-pattern coverage
+    ├── test-settings-valid.sh      # JSON parse + hook path checks
+    └── fixtures/                   # mock Claude hook stdin inputs
 ```

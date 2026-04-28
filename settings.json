@@ -25,16 +25,40 @@
       "Edit(~/.bashrc)",
       "Edit(~/.zshrc)",
       "Edit(~/.ssh/**)",
+      "Edit(~/.gnupg/**)",
+      "Edit(~/.aws/**)",
+      "Edit(~/.azure/**)",
+      "Edit(~/.config/gh/**)",
+      "Edit(~/.git-credentials)",
+      "Edit(~/.docker/config.json)",
+      "Edit(~/.kube/**)",
+      "Edit(~/.npmrc)",
+      "Edit(~/.pypirc)",
+      "Edit(~/.gem/credentials)",
+      "Edit(~/.config/gcloud/**)",
+      "Edit(~/.netrc)",
+      "Edit(~/.config/anthropic/**)",
+      "Edit(~/.cargo/credentials.toml)",
+      "Edit(~/.config/op/**)",
 
       "Write(~/.bashrc)",
       "Write(~/.zshrc)",
       "Write(~/.ssh/**)",
       "Write(~/.gnupg/**)",
       "Write(~/.aws/**)",
+      "Write(~/.azure/**)",
       "Write(~/.config/gh/**)",
       "Write(~/.git-credentials)",
+      "Write(~/.docker/config.json)",
+      "Write(~/.kube/**)",
       "Write(~/.npmrc)",
       "Write(~/.pypirc)",
+      "Write(~/.gem/credentials)",
+      "Write(~/.config/gcloud/**)",
+      "Write(~/.netrc)",
+      "Write(~/.config/anthropic/**)",
+      "Write(~/.cargo/credentials.toml)",
+      "Write(~/.config/op/**)",
 
       "Read(~/.ssh/**)",
       "Read(~/.gnupg/**)",
@@ -48,12 +72,31 @@
       "Read(~/.npm/**)",
       "Read(~/.pypirc)",
       "Read(~/.gem/credentials)",
+      "Read(~/.config/gcloud/**)",
+      "Read(~/.netrc)",
+      "Read(~/.config/anthropic/**)",
+      "Read(~/.cargo/credentials.toml)",
+      "Read(~/.config/op/**)",
       "Read(~/Library/Keychains/**)",
       "Read(~/Library/Application Support/**/metamask*/**)",
       "Read(~/Library/Application Support/**/electrum*/**)",
       "Read(~/Library/Application Support/**/exodus*/**)",
       "Read(~/Library/Application Support/**/phantom*/**)",
       "Read(~/Library/Application Support/**/solflare*/**)"
+    ],
+    "allow": [
+      "Bash(rg:*)", "Bash(grep:*)", "Bash(sed:*)", "Bash(awk:*)", "Bash(jq:*)", "Bash(yq:*)",
+      "Bash(fd:*)", "Bash(bat:*)", "Bash(eza:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)",
+      "Bash(tail:*)", "Bash(wc:*)", "Bash(sort:*)", "Bash(uniq:*)", "Bash(tr:*)", "Bash(cut:*)",
+      "Bash(realpath:*)", "Bash(basename:*)", "Bash(dirname:*)", "Bash(which:*)", "Bash(env)",
+      "Bash(printenv:*)", "Bash(pwd)", "Bash(test:*)", "Bash([:*)", "Bash(date)",
+      "Bash(git:*)", "Bash(gh:*)",
+      "Bash(python3:*)", "Bash(uv:*)", "Bash(ruff:*)", "Bash(ty:*)", "Bash(pytest:*)",
+      "Bash(node:*)", "Bash(npx:*)", "Bash(pnpm:*)", "Bash(oxlint:*)", "Bash(oxfmt:*)", "Bash(vitest:*)",
+      "Bash(go:*)", "Bash(gofmt:*)", "Bash(golangci-lint:*)",
+      "Bash(cargo:*)", "Bash(rustc:*)",
+      "Bash(shellcheck:*)", "Bash(shfmt:*)", "Bash(actionlint:*)", "Bash(zizmor:*)", "Bash(prek:*)",
+      "Bash(make:*)", "Bash(trash:*)"
     ]
   },
   "hooks": {
@@ -63,11 +106,64 @@
         "hooks": [
           {
             "type": "command",
-            "command": "CMD=$(jq -r '.tool_input.command'); if echo \"$CMD\" | grep -qE 'rm[[:space:]]+-[^[:space:]]*r[^[:space:]]*f'; then echo 'BLOCKED: Use trash instead of rm -rf' >&2; exit 2; fi"
+            "command": "$HOME/.claude/hooks/block-rm-rf.sh"
           },
           {
             "type": "command",
-            "command": "CMD=$(jq -r '.tool_input.command'); if echo \"$CMD\" | grep -qE 'git[[:space:]]+push[[:space:]]+[a-zA-Z_-]+[[:space:]]+(main|master)([[:space:]]|$)'; then echo 'BLOCKED: Use feature branches, not direct push to main' >&2; exit 2; fi"
+            "command": "$HOME/.claude/hooks/block-push-main.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/safety-block.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/safety-warn.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/log-tool-calls.sh pre"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/log-tool-calls.sh post"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "Review the assistant's final response. Reject it if the assistant is rationalizing incomplete work. Common patterns: claiming issues are 'pre-existing' or 'out of scope' to avoid fixing them, saying there are 'too many issues' to address all of them, deferring work to a 'follow-up' that was not requested, listing problems without fixing them and calling that done, or skipping test/lint failures with excuses. If the response shows any of these patterns, respond {\"ok\": false, \"reason\": \"You are rationalizing incomplete work. [specific issue]. Go back and finish.\"}. If the work is genuinely complete, respond {\"ok\": true}."
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/log-rotate.sh"
           }
         ]
       }

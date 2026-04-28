@@ -32,9 +32,13 @@ Use skills proactively when they match the task -- suggest relevant ones, don't 
 
 Fix every warning from every tool -- linters, type checkers, compilers, tests. If a warning truly can't be fixed, add an inline ignore with a justification comment. Never leave warnings unaddressed; a clean output is the baseline, not the goal.
 
-### Comments
+### Comments policy
 
-Code should be self-documenting. No commented-out code -- delete it. If you need a comment to explain WHAT the code does, refactor the code instead.
+Default to no comments. Only add when the WHY is non-obvious -- a hidden constraint, a subtle invariant, a workaround for a specific bug, behavior that would surprise a reader. If removing the comment wouldn't confuse a future reader, don't write it.
+
+Don't explain WHAT the code does -- well-named identifiers already do that. Don't reference the current task, fix, or callers ("used by X", "added for the Y flow", "handles the case from issue #123") -- those belong in the PR description and rot as the codebase evolves.
+
+No commented-out code -- delete it. Code should be self-documenting; if you need a comment to explain what code does, refactor instead.
 
 ### Error handling
 
@@ -177,6 +181,33 @@ module_name_repetitions = "allow"
 similar_names = "allow"
 ```
 
+### Go
+
+Runtime: latest stable Go (via system install or `gobrew`)
+
+| purpose | tool |
+|---------|------|
+| build & deps | `go build`, `go mod tidy` |
+| lint | `golangci-lint run` |
+| format | `gofmt -s -w` (or `goimports -w`) |
+| test | `go test ./... -race -count=1` |
+| static check | `go vet ./...` |
+
+**Style:**
+- Standard `gofmt` formatting -- no opinions, no debate
+- Wrap errors with `fmt.Errorf("op: %w", err)`; check with `errors.Is`/`errors.As`
+- Table-driven tests (`tests := []struct{...}{}`); subtests via `t.Run(tc.name, ...)`
+- Never `panic` in libraries; return errors
+- Accept interfaces, return concrete types
+- Avoid empty interface (`any`) at API boundaries
+- No `init()` for non-trivial logic; prefer explicit constructors
+- Pin dependencies via `go.sum`; run `go mod tidy` after dep changes
+
+**Concurrency:**
+- Use `context.Context` for cancellation; pass as first arg
+- `errgroup.Group` for parallel work that can fail
+- No goroutines without a clear lifetime owner
+
 ### Bash
 
 All scripts must start with `set -euo pipefail`. Lint: `shellcheck script.sh && shfmt -d script.sh`
@@ -186,6 +217,14 @@ All scripts must start with `set -euo pipefail`. Lint: `shellcheck script.sh && 
 Pin actions to SHA hashes with version comments: `actions/checkout@<full-sha> # vX.Y.Z` (use `persist-credentials: false`). Scan workflows with `zizmor` before committing. Configure Dependabot with 7-day cooldowns and grouped updates. Use uv ecosystem (not pip) for Python projects so Dependabot updates `uv.lock`.
 
 ## Workflow
+
+### Output preferences
+
+- Terse responses; no trailing summaries; no preamble
+- One-sentence updates between tool calls when something interesting happens; silence is wrong, narration is wrong
+- No emojis unless explicitly requested
+- Match response shape to task complexity -- a simple question gets a one-line answer, not headers and sections
+- End-of-turn summary: one or two sentences max
 
 ### Before committing
 
@@ -210,3 +249,15 @@ Pin actions to SHA hashes with version comments: `actions/checkout@<full-sha> # 
 Describe what the code does now -- not discarded approaches, prior iterations, or alternatives. Only describe what's in the diff.
 
 Use plain, factual language. A bug fix is a bug fix, not a "critical stability improvement." Avoid: critical, crucial, essential, significant, comprehensive, robust, elegant.
+
+---
+
+## Local infrastructure references
+
+This Claude Code installation is managed from `~/Desktop/Projects/claude-defaults/`. For details on what hooks fire and what gets logged:
+
+- **Hooks reference:** `~/Desktop/Projects/claude-defaults/docs/HOOKS.md`
+- **Logging schema and queries:** `~/Desktop/Projects/claude-defaults/docs/LOGGING.md`
+- **Tool-call log files:** `~/.claude/logs/tool-calls-YYYY-MM-DD.jsonl`
+
+Per-project overrides go in the project's own `.claude/settings.local.json` and `CLAUDE.md`.
