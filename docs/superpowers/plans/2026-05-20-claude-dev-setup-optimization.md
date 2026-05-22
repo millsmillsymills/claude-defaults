@@ -1549,6 +1549,46 @@ ls -la ~/Desktop/Projects/mcp-server-dev/                       # expect 4 migra
 
 ---
 
+## Execution log (2026-05-21)
+
+**Completed autonomously:**
+- Tasks 1, 2, 4, 5: snapshot, matt-pocock SHA pin (`ed4ea2c8`), Exa MCP added, context7 promoted to global, context7 plugin disabled. Final MCP set in `~/.claude.json` matches design: `aws-mcp, context7, exa, gandi, protonmail`.
+- Tasks 7-14: all four workspace-defaults config repos created and installed. Active folders symlinked. Validation passes for all four.
+- Tasks 16, 19: `gandi-mcp` and `unraid-mcp` migrated into `mcp-server-dev/`. `~/.claude.json` paths rewritten for both (values **and** project keys).
+- Task 20: global `enabledPlugins` trimmed from 21 to 9 (matt-pocock excluded until install).
+- Task 22: `claude-defaults/README.md` got the "Sibling workspaces" section. Each workspace-defaults README already has the "See also" cross-link.
+
+**Deferred (need user-interactive Claude Code session):**
+- Task 3 steps 4-6: `/plugin marketplace add dstroe2000/mattpocock_skills && /plugin install mattpocock@mattpocock-skills`. Will bring count from 9 to 10.
+- Task 6 step 3: open `/tmp/plugin-disable-test/` in a session, check `/agents`, fill in `docs/PLUGIN-SCOPE-FINDINGS.md`.
+- Task 11, plus the Step-6 smoke tests in Tasks 12-14: open each workspace, confirm specialized plugins load.
+- Task 21: end-to-end verification (open Sonarr session, check `/agents` and `/mcp`; open each workspace, confirm re-enabling works).
+
+**Deferred (in-flight work blocks safe migration):**
+- Task 17 (`protonmail-mcp`): repo had 38 modified files + ~50 untracked on branch `fix/102-103-cleanup`, plus the `issue-76-persist-degraded` worktree. Resume migration after that work is committed/stashed.
+- Task 18 (`unifi-mcp`): 4 locked Claude agent worktrees actively running (pid 94131): `test/271-touched-ap-guard`, `test/271-bump-poll-intervals`, `docs/271-no-full-sweep-warning`, `test/271-stop-on-unexpected-write-error`. Resume after agents finish.
+
+**Plan bugs found during execution:**
+- The `jq walk` filter only rewrites string *values*, not object *keys*. `~/.claude.json`'s `projects` keys ARE strings storing paths, so the walk missed them. Working command needs both `walk(...)` and `.projects |= with_entries(...)`. The Tasks 16-19 templates in this plan still show the buggy single-`walk` version — anyone resuming Tasks 17, 18 should use the corrected form below.
+
+**Corrected `~/.claude.json` rewrite for any future repo migration:**
+```bash
+jq --arg old "/Users/mills/Desktop/Projects/<name>" \
+   --arg new "/Users/mills/Desktop/Projects/mcp-server-dev/<name>" '
+  walk(if type == "string" and . == $old then $new
+       elif type == "string" and startswith($old + "/") then $new + (.[($old|length):])
+       else . end)
+  | .projects |= with_entries(
+      if .key == $old then .key = $new
+      elif (.key | startswith($old + "/")) then .key = ($new + (.key | .[($old|length):]))
+      else . end
+    )
+' ~/.claude.json > ~/.claude.json.new
+```
+
+**Quirks observed:**
+- `~/Desktop/Projects/.claude/settings.local.json` keeps having `enabledMcpjsonServers: ["context7"]` re-added by the harness's permission-grant writeback. Functionally inert (no `.mcp.json` exists at `Projects/` root, and context7 now loads from global `mcpServers`). Safe to leave; the dead key can be deleted at the end of any Claude session that doesn't trigger another permission write.
+
 ## Post-implementation notes
 
 - Schedule a monthly drift check: `cd ~/.claude/plugins/cache/mattpocock-skills/<sha>/ && git fetch origin && git log --oneline upstream/main..HEAD` (or similar; the exact command depends on how the plugin cache is laid out).
