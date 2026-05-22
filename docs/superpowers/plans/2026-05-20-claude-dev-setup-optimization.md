@@ -1564,9 +1564,11 @@ ls -la ~/Desktop/Projects/mcp-server-dev/                       # expect 4 migra
 - Task 11, plus the Step-6 smoke tests in Tasks 12-14: open each workspace, confirm specialized plugins load.
 - Task 21: end-to-end verification (open Sonarr session, check `/agents` and `/mcp`; open each workspace, confirm re-enabling works).
 
-**Deferred (in-flight work blocks safe migration):**
-- Task 17 (`protonmail-mcp`): repo had 38 modified files + ~50 untracked on branch `fix/102-103-cleanup`, plus the `issue-76-persist-degraded` worktree. Resume migration after that work is committed/stashed.
-- Task 18 (`unifi-mcp`): 4 locked Claude agent worktrees actively running (pid 94131): `test/271-touched-ap-guard`, `test/271-bump-poll-intervals`, `docs/271-no-full-sweep-warning`, `test/271-stop-on-unexpected-write-error`. Resume after agents finish.
+**Deferred-then-completed (resumed same session after user cleared blockers):**
+- Task 17 (`protonmail-mcp`): migrated to `mcp-server-dev/protonmail-mcp/` once dirty tree was cleared and `issue-76-persist-degraded` worktree removed.
+- Task 18 (`unifi-mcp`): migrated to `mcp-server-dev/unifi-mcp/` once agent worktrees finished.
+- Both used the corrected `jq walk + with_entries` filter; verified zero orphan paths in `~/.claude.json`.
+- `mcp-server-dev/CLAUDE.md` reverted to its original four-server list now that all are present.
 
 **Plan bugs found during execution:**
 - The `jq walk` filter only rewrites string *values*, not object *keys*. `~/.claude.json`'s `projects` keys ARE strings storing paths, so the walk missed them. Working command needs both `walk(...)` and `.projects |= with_entries(...)`. The Tasks 16-19 templates in this plan still show the buggy single-`walk` version — anyone resuming Tasks 17, 18 should use the corrected form below.
