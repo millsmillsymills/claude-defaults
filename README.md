@@ -63,7 +63,7 @@ Copy `settings.json` to `~/.claude/settings.json` (or merge entries into your ex
 - **alwaysThinkingEnabled: true** -- persists extended thinking across sessions. Toggle per-session with Option+T. Adds latency and cost on simple tasks; worth it for complex reasoning.
 - **permissions** -- deny rules that block reading credentials/secrets and editing shell config (see [Sandboxing](#sandboxing))
 - **cleanupPeriodDays: 365** -- keeps conversation history for a year instead of the default 30 days, so `/insights` has more data
-- **hooks** -- two PreToolUse hooks on Bash that block `rm -rf` and direct push to main (see [Hooks](#hooks))
+- **hooks** -- PreToolUse Bash blockers (`rm -rf`, push to main, extended destructive patterns), a PreToolUse Edit/Write sensitive-path warning, PreToolUse/PostToolUse tool-call logging, a SessionEnd log-rotate, and a Stop anti-rationalization prompt (see [Hooks](#hooks))
 - **statusLine** -- points to the statusline script (see below)
 
 ## Statusline
@@ -360,7 +360,8 @@ claude-defaults/
 ├── docs/
 │   ├── HOOKS.md                    # every hook documented
 │   ├── LOGGING.md                  # log schema, queries, rotation
-│   └── PROMOTION-RATIONALE.md      # what was/wasn't promoted from resurgent
+│   ├── PROMOTION-RATIONALE.md      # what was/wasn't promoted from resurgent
+│   └── superpowers/                # specs and implementation plans
 └── tests/
     ├── run-all.sh                  # dispatcher
     ├── test-install.sh             # install/uninstall roundtrip
