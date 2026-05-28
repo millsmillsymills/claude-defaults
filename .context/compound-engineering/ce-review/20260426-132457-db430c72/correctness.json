@@ -1,0 +1,120 @@
+{
+  "reviewer": "correctness",
+  "run_id": "20260426-132457-db430c72",
+  "findings": [
+    {
+      "id": "C-01",
+      "title": "pre-row and post-row call_id values never match: pre/post pairing by call_id is broken",
+      "severity": "high",
+      "confidence": 0.98,
+      "merge_tier": "must-fix",
+      "file": "hooks/lib/log_tool_call.py",
+      "lines": "178-179, 188, 245",
+      "why_it_matters": "The documented log schema states that call_id 'matches pre row to its post row', and LOGGING.md's query examples all assume you can join pre and post rows by call_id. Because _call_id() returns a microsecond timestamp + PID, two invocations at different microseconds produce different values. The pre-event writes _call_id() to the temp pair file (line 179) and then makes a SECOND call to _call_id() for the payload (line 188), producing call_id_A in the file and call_id_B in the logged pre-row. The post-event reads the pair file but only uses parts[1] (start_time) and discards parts[0] (call_id_A), then generates a third call_id_C for the post-row payload (line 245). Result: pre_row.call_id = B, post_row.call_id = C. They are different microsecond timestamps and will never match. Every log analysis that relies on joining pre/post rows by call_id silently produces empty results or wrong matches.",
+      "evidence": "In the pre-event block: line 179 writes `f\"{_call_id()} {time.time()}\\n\"` to the pair file; line 188 writes `\"call_id\": _call_id()` to the payload — two separate _call_id() invocations. In the post-event block: line 200-202 reads parts[1] as start_time but ignores parts[0]; line 245 writes `\"call_id\": _call_id()` as a fresh third invocation. Verified with a test showing the two calls differ by ~1265 microseconds.",
+      "fix": "Generate call_id once per invocation and reuse it. For pre: assign `cid = _call_id()` before the try block, write `f\"{cid} {time.time()}\\n\"` to the pair file, and use `cid` in the payload. For post: read parts[0] from the pair file as the call_id (the same one that was in the pre-row payload), and use that as the post-row's call_id. This makes pre_row.call_id == post_row.call_id."
+    },
+    {
+      "id": "C-02",
+      "title": "_truncate_output can produce output that still exceeds max_bytes when fields are at or below the 256-byte floor",
+      "severity": "medium",
+      "confidence": 0.97,
+      "merge_tier": "must-fix",
+      "file": "hooks/lib/log_tool_call.py",
+      "lines": "71-96",
+      "why_it_matters": "The documented guarantee is that log lines are capped at 1 MB (LOGGING.md: 'Lines exceeding 1 MB get output.stdout/output.stderr truncated'). When stdout and/or stderr are each <= 256 bytes, the loop skips them with `continue` (line 85). If their combined size plus JSON overhead still exceeds max_bytes, no truncation occurs and the line is written at full size. Concrete reproduction: stdout=240 bytes, stderr=240 bytes, max_bytes=300 yields a final size of 521 bytes. At production max_bytes=1MB this scenario is unlikely because 256+256 is well under 1MB, but a misconfigured CLAUDE_LOG_MAX_LINE_BYTES or a very large number of non-output fields in the payload could trigger it. The same bug exists in hooks/lib/jsonl-write.py.",
+      "evidence": "Loop at lines 84-93: `if len(encoded) <= 256: continue` skips the field without checking whether the overall size constraint is still violated. Verified with Python: stdout=240, stderr=240, max_bytes=300 produces final_size=521. Second scenario: stdout truncated to 256, stderr=200 (skipped), max_bytes=500 produces final_size=525.",
+      "fix": "After the loop, do a final size check. If the payload still exceeds max_bytes, apply hard truncation to any string value that can still be shrunk (including fields at or below the 256-byte floor, or add a final pass that simply slices the encoded line at max_bytes-1 with a truncation marker appended). Same fix needed in hooks/lib/jsonl-write.py which contains identical logic."
+    },
+    {
+      "id": "C-03",
+      "title": "non-ENOSPC OSError from _atomic_append propagates silently: tool call is safe but OSError from permissions/path issues is swallowed without any signal",
+      "severity": "low",
+      "confidence": 0.90,
+      "merge_tier": "informational",
+      "file": "hooks/lib/log_tool_call.py",
+      "lines": "254-259",
+      "why_it_matters": "The 'logging never breaks a tool call' invariant is correctly upheld. However, a permission-denied (EACCES) or read-only-filesystem (EROFS) error from _atomic_append falls through the `if exc.errno == errno.ENOSPC` check (the condition is false) and reaches `return 0` silently. The comment says ENOSPC is 'silently dropped' but the intent is that only ENOSPC is an expected silent failure — other OS errors (e.g., /home/.claude/logs/ is mode 000) indicate a misconfiguration that a developer would want to know about. Currently there is no way to distinguish 'disk full' from 'wrong permissions on log dir'.",
+      "evidence": "Lines 254-259: `except OSError as exc: if exc.errno == errno.ENOSPC: return 0` followed by `return 0`. The non-ENOSPC path does not enter the `if`, skips `return 0` inside the if, and falls through to the unconditional `return 0` on line 259. Verified that EACCES and EROFS both silently return 0.",
+      "fix": "For non-ENOSPC OSErrors, write a one-line warning to stderr (e.g., `print(f'claude-log warning: {exc}', file=sys.stderr)`). This is still exit 0 and doesn't break the tool call, but gives the developer visibility when log writes fail for unexpected reasons. Or add an env flag CLAUDE_LOG_SILENT to suppress even this."
+    },
+    {
+      "id": "C-04",
+      "title": "install_settings idempotency guard uses a broad regex that can false-positive on non-hook .command fields",
+      "severity": "low",
+      "confidence": 0.82,
+      "merge_tier": "informational",
+      "file": "scripts/install.sh",
+      "lines": "119-125",
+      "why_it_matters": "The idempotency check at line 120 runs `jq -r '.. | objects | .command? // empty'` which walks ALL objects in settings.json and emits every .command field value. If the user has a pre-existing settings.json that contains a string value (not a command path) that happens to contain 'safety-block.sh', 'log-tool-calls.sh', etc. — for example, a comment in a 'description' field or a statusLine command — the check will match and skip the merge, leaving the hooks un-wired. Conversely, if the user had manually added one of the hook names to a pre-existing non-hook context, install would silently skip, leaving the installation incomplete.",
+      "evidence": "Line 120: `jq -r '.. | objects | .command? // empty' \"$target\" 2>/dev/null | grep -qE 'safety-block\\.sh|...'`. The `..` recurses into ALL objects, not just `hooks[].hooks[].command`. Any object with a `.command` key matching the pattern anywhere in the JSON will trigger the skip.",
+      "fix": "Narrow the jq check to only look in the hooks path: `jq -r '.hooks // {} | .. | objects | .command? // empty'` or better, check `.hooks.PreToolUse` specifically: `jq -e '.hooks.PreToolUse // [] | map(.hooks // [] | map(.command) | flatten) | flatten | map(select(test(\"log-tool-calls\\.sh\"))) | length > 0' \"$target\"`."
+    },
+    {
+      "id": "C-05",
+      "title": "log-tool-calls.sh symlink resolution is single-hop only: fails with relative or chained symlinks",
+      "severity": "low",
+      "confidence": 0.75,
+      "merge_tier": "informational",
+      "file": "hooks/log-tool-calls.sh",
+      "lines": "13-17",
+      "why_it_matters": "The symlink resolution code does one level of readlink: `if [ -L \"$SOURCE\" ]; then SOURCE=$(readlink \"$SOURCE\"); fi`. If the symlink target is itself a symlink (chain of two hops), the resolved path still points to a symlink, and `dirname` returns the wrong directory. install.sh creates symlinks with absolute paths (so this works in practice), but if someone installs with a relative symlink or in an environment where the repo is double-symlinked (common in nix/home-manager setups), `${SCRIPT_DIR}/lib/log_tool_call.py` resolves to a nonexistent path and Python fails to start. Since the script uses `set +e`, this failure is silently swallowed (exec fails, hook exits non-zero or 127 depending on shell version, but the logging-never-breaks invariant means the tool call proceeds).",
+      "evidence": "Lines 14-15: `if [ -L \"$SOURCE\" ]; then SOURCE=$(readlink \"$SOURCE\"); fi` — only one readlink dereference. Common.sh uses a portable loop with `greadlink -f` or `readlink -f` which handles multi-hop chains, but log-tool-calls.sh doesn't source common.sh.",
+      "fix": "Use a while loop: `while [ -L \"$SOURCE\" ]; do SOURCE=$(readlink \"$SOURCE\"); done` to follow the full chain. Or use `greadlink -f` / `readlink -f` with the fallback already in common.sh's SCRIPT_DIR_OF helper."
+    },
+    {
+      "id": "C-06",
+      "title": "jq hooks merge uses object * (shallow object merge) which discards existing PreToolUse/PostToolUse arrays",
+      "severity": "low",
+      "confidence": 0.88,
+      "merge_tier": "informational",
+      "file": "scripts/install.sh",
+      "lines": "146",
+      "why_it_matters": "The jq expression `.hooks = ($existing.hooks // {}) * ($new.hooks // {})` uses jq's `*` operator. For objects, `*` performs a recursive merge — but when both sides have the same key with an array value (e.g., `PreToolUse`), `*` picks the right-hand (new) value wholesale, discarding the existing array. This means any pre-existing PreToolUse hooks that the user had wired before running this installer are silently dropped. This is arguably intentional (the repo's hooks block is authoritative), but it is not documented as such, and the README's claim about 'preserving existing' only covers enabledPlugins, extraKnownMarketplaces, and skipAutoPermissionPrompt. A user who had custom inline hooks in their existing settings.json's PreToolUse would lose them without warning.",
+      "evidence": "Verified with jq simulation: existing PreToolUse=[{matcher:Bash, hooks:[existing-hook.sh]}], new PreToolUse=[{matcher:*, hooks:[new-hook.sh]}] — result contains only new-hook.sh. The existing entry is gone.",
+      "fix": "Either (a) document clearly that hooks are replaced (not merged) by install, or (b) change the hooks merge strategy to concatenate arrays by event key: `.hooks = ($existing.hooks // {}) as $eh | ($new.hooks // {}) | to_entries | map(.value = ($eh[.key] // []) + .value) | from_entries`. Option (a) is simpler and arguably correct given the design intent."
+    }
+  ],
+  "residual_risks": [
+    {
+      "id": "RR-01",
+      "description": "Concurrent identical tool calls cause pair-file collision and duration_ms=0 for one post-row. Two calls in the same session with identical tool_input (e.g., two parallel `Bash(git status)` invocations) share the same pair_path, so the first post-event to run deletes the pair file and the second gets duration_ms=0. This is acknowledged in the comment ('Fall back to most-recent same-session file') but the fallback is also unreliable: it picks the most recently modified file for the session, which may belong to a different call entirely.",
+      "severity": "low",
+      "confidence": 0.70
+    },
+    {
+      "id": "RR-02",
+      "description": "log_tool_call.py reads the pair file with `.split()` which splits on any whitespace including newlines and tabs. If the call_id or timestamp somehow contains whitespace (they don't in the current _call_id() implementation, but a future change could break this silently), `parts[1]` would be the wrong field and `start_time` would parse incorrectly or raise ValueError (caught and ignored, giving duration_ms=0).",
+      "severity": "low",
+      "confidence": 0.60
+    },
+    {
+      "id": "RR-03",
+      "description": "The `uninstall.sh` backup restoration uses `cp -p` (preserves mode/timestamps) but runs inside a `while read -r rel` loop over `find` output. On paths with spaces, `find . -type f -print` without `-print0` and without `IFS` handling will split filenames on spaces, causing incorrect src/dst paths. The log directory and hook files don't have spaces in practice, but settings.json paths with spaces in the HOME directory would break silently.",
+      "severity": "low",
+      "confidence": 0.65
+    }
+  ],
+  "testing_gaps": [
+    {
+      "id": "TG-01",
+      "description": "No test verifies that pre-row and post-row call_id values match (because they don't). The test-hooks.sh test only checks that a pre-row has `.event == \"pre\"` and `.mcp_server == \"playwright\"` — it does not check call_id matching between pre and post rows for the same tool call.",
+      "file": "tests/test-hooks.sh"
+    },
+    {
+      "id": "TG-02",
+      "description": "No test exercises _truncate_output at the boundary where stdout and/or stderr are each <= 256 bytes but combined with JSON overhead still exceed max_bytes. The existing truncation test in the plan (if any) likely uses large stdout/stderr values that do get truncated.",
+      "file": "hooks/lib/log_tool_call.py"
+    },
+    {
+      "id": "TG-03",
+      "description": "No test verifies that `install_settings` does NOT falsely skip when the existing settings.json contains a string value that mentions 'safety-block.sh' in a non-hook context (e.g., a comment field or statusLine command).",
+      "file": "scripts/install.sh"
+    },
+    {
+      "id": "TG-04",
+      "description": "test-hooks.sh tests log-rotate.sh with CLAUDE_LOG_RETAIN_DAYS=90 on a file touched to 100 days old, but does not test the rotation path (gzip when file exceeds ROTATE_BYTES). The test only covers the prune-by-age path.",
+      "file": "tests/test-hooks.sh"
+    }
+  ]
+}
