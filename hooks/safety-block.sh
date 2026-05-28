@@ -5,6 +5,10 @@
 # Note: existing hooks/block-rm-rf.sh and hooks/block-push-main.sh remain
 # wired up alongside this one for back-compat. This script covers patterns
 # they don't (dd, mkfs, fork bombs, sudo rm, force-push variants, chmod 777).
+#
+# Patterns below intentionally contain the literal text "$HOME" (a string a user
+# might type), not a shell expansion -- single quotes are correct here.
+# shellcheck disable=SC2016
 
 set -uo pipefail
 
@@ -20,8 +24,13 @@ block() {
     exit 2
 }
 
-# rm -rf against root or home
-if echo "$S" | grep -qE '(^|[[:space:]])rm[[:space:]]+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)[a-zA-Z]*[[:space:]]+(/$|/[[:space:]]|/Users(/|[[:space:]])|~([[:space:]/]|$)|\$HOME)'; then
+# rm -rf against root or home. Detect rm + recursive + force independently
+# (any flag arrangement: -rf, -fr, -r -f, -Rf, --recursive --force) and a
+# root/home target anywhere in the command, so split flags don't bypass it.
+if echo "$S" | grep -qE '(^|[[:space:]])rm([[:space:]]|$)' \
+    && echo "$S" | grep -qE '(-[a-zA-Z]*[rR]|--recursive)' \
+    && echo "$S" | grep -qE '(-[a-zA-Z]*f|--force)' \
+    && echo "$S" | grep -qE '(^|[[:space:]])(/([[:space:]]|$)|/Users([[:space:]/]|$)|~([[:space:]/]|$)|\$HOME)'; then
     block "rm -rf against root, /Users, ~, or \$HOME. Use 'trash' or a specific path."
 fi
 

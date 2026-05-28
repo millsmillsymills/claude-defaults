@@ -7,6 +7,7 @@ TESTS=(
     tests/test-settings-valid.sh
     tests/test-redaction.sh
     tests/test-hooks.sh
+    tests/test-guard-hooks.sh
     tests/test-install.sh
 )
 
