@@ -29,6 +29,17 @@ declare -a cases=(
     'psql postgresql://admin:SuperSecret123@db.internal/prod|admin:***@|SuperSecret123'
     'github_pat_11ABCDEFG1234567890abcdefghijklmnop|***GH_PAT***|github_pat_11ABCDEFG'
     'ASIAIOSFODNN7EXAMPLE|***AWS_STS_KEY***|ASIAIOSFODNN7EXAMPLE'
+    # H3: Slack tokens
+    'xoxb-12345678901-abcdefghijklmnopqrst|***SLACK_TOKEN***|xoxb-12345678901'
+    # H5: modern OpenAI project keys (contain - and _, longer than 80 chars)
+    'sk-proj-T3BlbkFJabcdefghijklmnopqrstuvwx|***OPENAI_KEY***|sk-proj-T3BlbkFJ'
+    # M1: URL userinfo password shorter than 4 chars
+    'postgresql://admin:abc@db.internal/prod|admin:***@|:abc@'
+    # M2: lowercase / mixed-case compound secret env vars
+    'database_password=hunter2value|***|hunter2value'
+    'Db_Password=hunter2value|***|hunter2value'
+    # L4: named secret with a value shorter than 3 chars
+    'secret=xy|secret=***|=xy'
 )
 
 for c in "${cases[@]}"; do
@@ -79,6 +90,25 @@ nested='{"a":{"b":["password=foo", "ok"]}}'
 out=$(echo "$nested" | python3 hooks/lib/redact.py)
 echo "$out" | jq -e '.a.b[0] | test("\\*\\*\\*")' >/dev/null \
     || fail_msg "nested redaction failed: $out"
+
+# H4: PEM private key blocks (multiline; needs DOTALL pattern)
+pem=$(printf -- '-----BEGIN RSA PRIVATE KEY-----\nMIIEsecretbodyABC\n-----END RSA PRIVATE KEY-----')
+pem_out=$(jq -nc --arg v "$pem" '{value:$v}' | python3 hooks/lib/redact.py | jq -r '.value')
+echo "$pem_out" | grep -qF '***PRIVATE_KEY***' \
+    || fail_msg "PEM key not redacted: $pem_out"
+if echo "$pem_out" | grep -qF 'MIIEsecretbodyABC'; then
+    fail_msg "PEM key body leaked: $pem_out"
+fi
+
+# C1: secrets stored as JSON values under sensitive dict keys (not key=value strings)
+keyed='{"password":"plaintextpw","env":{"API_KEY":"plaintextapikey"},"note":"hello world"}'
+keyed_out=$(echo "$keyed" | python3 hooks/lib/redact.py)
+echo "$keyed_out" | jq -e '.password=="***"' >/dev/null \
+    || fail_msg "key-aware: top-level password value not redacted: $keyed_out"
+echo "$keyed_out" | jq -e '.env.API_KEY=="***"' >/dev/null \
+    || fail_msg "key-aware: nested API_KEY value not redacted: $keyed_out"
+echo "$keyed_out" | jq -e '.note=="hello world"' >/dev/null \
+    || fail_msg "key-aware: benign key clobbered: $keyed_out"
 
 if [ "$fail" -eq 0 ]; then
     echo "test-redaction: PASS"
