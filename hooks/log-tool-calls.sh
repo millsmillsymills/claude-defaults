@@ -12,7 +12,7 @@ set +e
 # Resolve script dir through symlink chain.
 SOURCE="${BASH_SOURCE[0]}"
 if [ -L "$SOURCE" ]; then
-    SOURCE=$(readlink "$SOURCE")
+  SOURCE=$(readlink "$SOURCE")
 fi
 SCRIPT_DIR=$(cd "$(dirname "$SOURCE")" 2>/dev/null && pwd) || SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

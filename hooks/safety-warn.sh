@@ -12,7 +12,7 @@ FP=$(jq -r '.tool_input.file_path // ""' 2>/dev/null || echo "")
 [ -n "$FP" ] || exit 0
 
 if echo "$FP" | grep -qE '(\.env(\.[^/]+)?$|/credentials([._-][^/]+)?(\.[a-z]+)?$|secrets?\.(json|ya?ml)$|\.pem$|\.key$|id_rsa(\.|$)|\.p12$|\.pfx$|\.gpg$)'; then
-    cat >&2 <<'WARN'
+  cat >&2 <<'WARN'
 WARNING: editing a sensitive-looking file. Verify it's in .gitignore.
 Never hardcode secrets — use env vars or a secrets manager. Run `git status`
 after editing to confirm the file won't be committed.

@@ -5,7 +5,10 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
 fail=0
-fail_msg() { echo "FAIL: $1" >&2; fail=$((fail + 1)); }
+fail_msg() {
+  echo "FAIL: $1" >&2
+  fail=$((fail + 1))
+}
 
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
@@ -17,11 +20,11 @@ printf '%s\n' 'this line is not json' >>"$log"
 printf 'bad-byte:\xff:end\n' >>"$log"
 chmod 0644 "$log"
 
-python3 scripts/redact-existing-logs.py "$log" >/dev/null \
-    || fail_msg "script exited non-zero"
+python3 scripts/redact-existing-logs.py "$log" >/dev/null ||
+  fail_msg "script exited non-zero"
 
 if grep -qF 'ghp_aaaa' "$log"; then
-    fail_msg "secret not redacted"
+  fail_msg "secret not redacted"
 fi
 grep -qF '***GH_TOKEN***' "$log" || fail_msg "redaction marker missing"
 grep -qF 'this line is not json' "$log" || fail_msg "non-JSON line not preserved"
@@ -36,8 +39,8 @@ mode=$(stat -f '%Lp' "$log" 2>/dev/null || stat -c '%a' "$log")
 [ "$mode" = "644" ] || fail_msg "mode changed to $mode (expected 644)"
 
 if [ "$fail" -eq 0 ]; then
-    echo "test-redact-existing: PASS"
+  echo "test-redact-existing: PASS"
 else
-    echo "test-redact-existing: $fail FAILURE(S)"
-    exit 1
+  echo "test-redact-existing: $fail FAILURE(S)"
+  exit 1
 fi
