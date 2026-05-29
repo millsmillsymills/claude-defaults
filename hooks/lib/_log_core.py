@@ -157,8 +157,12 @@ DEFAULT_MAX_LINE = 1024 * 1024  # 1 MB
 def truncate_output(obj: dict, max_bytes: int) -> dict:
     """If serialized JSON would exceed `max_bytes`, trim output.{stdout,stderr}.
 
-    Mutates and returns `obj` for convenience. Adds an `output._truncated_bytes`
-    marker if anything was dropped.
+    Mutates and returns `obj` for convenience. Records the number of dropped
+    bytes in `output._truncated_bytes` when anything was dropped. When the
+    non-trimmable envelope (call_id, ts, args, ...) alone exceeds `max_bytes`,
+    stdout/stderr are dropped entirely and `output._truncated_oversize` is set
+    true: the line is still emitted over the cap, because nothing left here is
+    trimmable. The marker therefore never implies a cap that wasn't met.
     """
     serialized = json.dumps(obj, ensure_ascii=False)
     overhead = len((serialized + "\n").encode("utf-8")) - max_bytes
@@ -194,8 +198,8 @@ def truncate_output(obj: dict, max_bytes: int) -> dict:
     # The per-field loop respects a 256-byte floor and skips fields already at
     # or under it, so a payload whose envelope plus two short fields still
     # exceeds max_bytes would otherwise be written oversize. Hard-truncate
-    # below the floor (stdout first, since it is usually larger) to enforce the
-    # per-line guarantee. The 64-byte margin leaves room for the marker.
+    # below the floor (stdout first, since it is usually larger). The 64-byte
+    # margin leaves room for the marker.
     for key in ("stdout", "stderr"):
         serialized = json.dumps(obj, ensure_ascii=False)
         overhead = len((serialized + "\n").encode("utf-8")) - max_bytes
@@ -210,6 +214,13 @@ def truncate_output(obj: dict, max_bytes: int) -> dict:
             continue
         output[key] = encoded[:keep].decode("utf-8", errors="replace")
         output["_truncated_bytes"] = output.get("_truncated_bytes", 0) + (len(encoded) - keep)
+
+    # If even empty stdout/stderr cannot bring the line under max_bytes, the
+    # envelope alone exceeds the cap. Flag it honestly rather than letting
+    # _truncated_bytes imply the per-line cap was met.
+    serialized = json.dumps(obj, ensure_ascii=False)
+    if len((serialized + "\n").encode("utf-8")) > max_bytes:
+        output["_truncated_oversize"] = True
 
     return obj
 

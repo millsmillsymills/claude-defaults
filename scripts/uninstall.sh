@@ -12,6 +12,10 @@ MANIFEST="${CLAUDE_DIR}/.claude-defaults-install.manifest"
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
 
+# Set when any restore step fails, so a partial restore is reported via a
+# non-zero exit instead of a stderr-only warning automation can't detect.
+RESTORE_FAILED=0
+
 log() { echo "  $1"; }
 ok()  { echo "  OK: $1"; }
 warn(){ echo "  WARN: $1" >&2; }
@@ -97,6 +101,7 @@ if [ -n "$LATEST_BACKUP" ] && [ -d "$LATEST_BACKUP" ]; then
                 log "restored: $dst"
             else
                 warn "failed to restore $dst — partial restore"
+                RESTORE_FAILED=1
             fi
         done < <(cd "$LATEST_BACKUP" && find . -type f -print0)
     fi
@@ -138,9 +143,11 @@ if [ -f "$MANIFEST" ]; then
                 if [ -f "$arg" ]; then
                     if [ "$DRY_RUN" = "1" ]; then
                         dry "restore $arg -> ${HOME}/.mcp.json"
-                    else
-                        cp -p "$arg" "${HOME}/.mcp.json"
+                    elif cp -p "$arg" "${HOME}/.mcp.json"; then
                         ok "restored: ${HOME}/.mcp.json"
+                    else
+                        warn "failed to restore ${HOME}/.mcp.json — partial restore"
+                        RESTORE_FAILED=1
                     fi
                 fi
                 ;;
@@ -150,4 +157,8 @@ if [ -f "$MANIFEST" ]; then
 fi
 
 echo ""
+if [ "$RESTORE_FAILED" = "1" ]; then
+    echo "Done with errors: one or more files could not be restored (see WARN above)." >&2
+    exit 1
+fi
 echo "Done."
