@@ -57,8 +57,20 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bgh[opsu]_[A-Za-z0-9]{36,}\b"), "***GH_TOKEN***"),
     # GitHub fine-grained PATs (different prefix than gh[opsu]_)
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{30,}\b"), "***GH_PAT***"),
-    # Slack tokens (bot/user/workspace/refresh/app: xoxb-, xoxp-, xoxa-, xoxr-, xoxs-)
-    (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), "***SLACK_TOKEN***"),
+    # Slack tokens (bot/user/workspace/refresh/admin/legacy-refresh:
+    # xoxb-, xoxp-, xoxa-, xoxr-, xoxs-, xoxe-)
+    (re.compile(r"\bxox[baprse]-[A-Za-z0-9-]{10,}\b"), "***SLACK_TOKEN***"),
+    # Slack app-level tokens (xapp-1-...)
+    (re.compile(r"\bxapp-1-[A-Za-z0-9-]{10,}\b"), "***SLACK_APP_TOKEN***"),
+    # Stripe secret keys (sk_live_/sk_test_; underscore form, distinct from sk-)
+    (re.compile(r"\bsk_(?:live|test)_[A-Za-z0-9]{16,}\b"), "***STRIPE_KEY***"),
+    # Twilio API key SID (SK + 32 hex)
+    (re.compile(r"\bSK[a-f0-9]{32}\b"), "***TWILIO_KEY***"),
+    # Twilio Account SID (AC + 32 hex)
+    (re.compile(r"\bAC[a-f0-9]{32}\b"), "***TWILIO_SID***"),
+    # SendGrid API keys (SG.<22>.<43>)
+    (re.compile(r"\bSG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}\b"),
+     "***SENDGRID_KEY***"),
     # Anthropic API keys
     (re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{8,}\b"), "***ANTHROPIC_KEY***"),
     # OpenAI keys -- legacy (sk-...) and modern project/service/admin keys
@@ -119,9 +131,16 @@ def redact_string(s: str) -> str:
 # string patterns above only fire on `key=value` text; structured payloads
 # (MCP args, env maps, config objects) carry the secret as a bare JSON value
 # under a sensitive key, so the key itself is the signal.
+#
+# The key must END with a secret word (matched with `.fullmatch`). The end
+# anchor is what protects analytics telemetry -- `csrf_token_count`,
+# `bearer_count`, `last_authorization_at` end in a non-secret word, so they do
+# not match. The prefix is permissive (`.*`, any separator or camelCase hump)
+# so camelCase keys are caught too: `secretAccessKey`, `accessToken`,
+# `refreshToken`, `clientSecret`, `sessionToken`, `bearerToken`, `authToken`.
 _SECRET_KEY_RE = re.compile(
-    r"(?i)(?:password|passwd|secret|token|api[_-]?key|access[_-]?key"
-    r"|private[_-]?key|authorization|bearer|credentials?)"
+    r"(?i)^.*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key"
+    r"|private[_-]?key|secret[_-]?key|authorization|bearer|credentials?)$"
 )
 
 
@@ -141,7 +160,7 @@ def redact_value(v: object) -> object:
         return [redact_value(x) for x in v]
     if isinstance(v, dict):
         return {
-            k: "***" if isinstance(k, str) and _SECRET_KEY_RE.search(k)
+            k: "***" if isinstance(k, str) and _SECRET_KEY_RE.fullmatch(k)
             else redact_value(val)
             for k, val in v.items()
         }
