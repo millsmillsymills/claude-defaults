@@ -80,6 +80,13 @@ out=$(echo "$nested" | python3 hooks/lib/redact.py)
 echo "$out" | jq -e '.a.b[0] | test("\\*\\*\\*")' >/dev/null \
     || fail_msg "nested redaction failed: $out"
 
+# L7: invalid JSON must fail fast (exit 1, actionable message).
+err=$(printf 'not-json{' | python3 hooks/lib/redact.py 2>&1 >/dev/null)
+rc=$?
+[ "$rc" -eq 1 ] || fail_msg "invalid JSON did not exit 1 (rc=$rc)"
+echo "$err" | grep -qF 'not valid JSON' \
+    || fail_msg "invalid JSON missing 'not valid JSON' message: $err"
+
 if [ "$fail" -eq 0 ]; then
     echo "test-redaction: PASS"
 else
