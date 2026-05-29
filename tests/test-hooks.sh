@@ -235,7 +235,7 @@ printf 'second\n' > "$rot_log"
 CLAUDE_LOG_ROTATE_BYTES=1 bash hooks/log-rotate.sh
 [ -f "${rot_log}.2.gz" ] || fail_msg "M12: collision did not bump to .2.gz"
 
-# === Issue #7: gzip rotation produces a valid, faithful archive ===
+# === Gzip rotation produces a valid, faithful archive ===
 echo "  testing log-rotate.sh gzip integrity (issue #7)"
 gz_log="$TEST_HOME/.claude/logs/tool-calls-$(date -u +%Y-%m-%d).jsonl"
 rm -f "${gz_log}".*.gz
@@ -250,7 +250,7 @@ gzip -t "$gz_out" 2>/dev/null || fail_msg "issue #7: rotated .gz failed integrit
 decompressed=$(gzip -dc "$gz_out" 2>/dev/null)
 [ "$decompressed" = "$gz_payload" ] || fail_msg "issue #7: decompressed content does not match original"
 
-# === Issue #53: rename-first rotation detaches the archive from the live path ===
+# === Rename-first rotation detaches the archive from the live path ===
 echo "  testing log-rotate.sh concurrent-append safety (issue #53)"
 cc_log="$TEST_HOME/.claude/logs/tool-calls-$(date -u +%Y-%m-%d).jsonl"
 rm -f "${cc_log}".*.gz "${cc_log}".*.rotating "$cc_log"
@@ -269,7 +269,7 @@ cc_arch=$(gzip -dc "$cc_gz" 2>/dev/null)
 [ "$cc_arch" = "$(printf 'old-1\nold-2')" ] || fail_msg "issue #53: archive content unexpected"
 [ -e "${cc_log}.1.rotating" ] && fail_msg "issue #53: .rotating left behind on success"
 
-# === Issue #53: a corrupt archive preserves the data instead of destroying it ===
+# === A corrupt archive preserves the data instead of destroying it ===
 echo "  testing log-rotate.sh data preservation on bad archive (issue #53)"
 fl_log="$TEST_HOME/.claude/logs/tool-calls-$(date -u +%Y-%m-%d).jsonl"
 rm -f "${fl_log}".*.gz "${fl_log}".*.rotating "$fl_log"
@@ -294,7 +294,7 @@ grep -q 'keep-me' <<< "$survived" || fail_msg "issue #53: data lost when archive
 [ -e "${fl_log}.1.gz.tmp" ] && fail_msg "issue #53: tmp left after failed rotation"
 rm -f "${fl_log}".*.rotating "$fl_log"
 
-# === Issue #12: mid-session rotation fires via the pre path ===
+# === Mid-session rotation fires via the pre path ===
 echo "  testing mid-session rotation via pre path (issue #12)"
 ms_log="$TEST_HOME/.claude/logs/tool-calls-$(date -u +%Y-%m-%d).jsonl"
 rm -f "${ms_log}".*.gz

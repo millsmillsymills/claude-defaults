@@ -4,6 +4,10 @@ set -euo pipefail
 # PreToolUse hook: blocks direct push to main/master, requires feature branches.
 # Wire up in settings.json PreToolUse -> Bash matcher.
 #
+# Kept alongside safety-block.py despite the overlap: this blocks ALL pushes to
+# main/master, whereas safety-block.py only blocks force-pushes. Dropping it
+# would narrow the policy to force-push-only.
+#
 # Exit codes:
 #   0 = allow
 #   2 = block (error message fed back to Claude)

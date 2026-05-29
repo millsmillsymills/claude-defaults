@@ -113,14 +113,18 @@ if [ -L "${CLAUDE_DIR}/logs" ]; then
     fail "${CLAUDE_DIR}/logs is a symlink (should be a real directory)"
 elif [ -d "${CLAUDE_DIR}/logs" ]; then
     pass "${CLAUDE_DIR}/logs is a real directory"
-    # Issue #15 (polish): warn (don't fail) if today's log is missing or
+    # Warn (don't fail) if today's log is missing or
     # very stale. Lets agents distinguish "logging working" from "logging
     # silently broken" without false-positive on a freshly-installed-but-
     # never-used setup.
     today_utc=$(python3 -c 'import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"))' 2>/dev/null || date -u +%Y-%m-%d)
     today_log="${CLAUDE_DIR}/logs/tool-calls-${today_utc}.jsonl"
     if [ ! -f "$today_log" ]; then
-        warn "${today_log} missing (no log rows yet today; OK for a fresh install or unused day)"
+        if ls "${CLAUDE_DIR}/logs/tool-calls-${today_utc}.jsonl"*.gz >/dev/null 2>&1; then
+            pass "${today_log} rotated to .gz (logging healthy)"
+        else
+            warn "${today_log} missing (no log rows yet today; OK for a fresh install or unused day)"
+        fi
     else
         # mtime within last 24h?
         if find "$today_log" -mtime -1 -print 2>/dev/null | grep -q .; then

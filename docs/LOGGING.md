@@ -46,7 +46,7 @@ One JSON object per line. Two row types: `pre` (written before the tool runs) an
 | `session_id` | string | from Claude Code hook input; `"unknown"` if absent |
 | `cwd` | string | working dir at time of call |
 | `event` | `"pre" \| "post"` | which side of the call |
-| `call_id` | string | nanosecond ts + PID; matches pre row to its post row |
+| `call_id` | string | microsecond ts + PID; matches pre row to its post row |
 | `tool` | string | tool name (e.g., `Bash`, `Edit`, `mcp__playwright__browser_click`) |
 | `mcp_server` | string \| null | parsed from `mcp__<server>__<method>` tool names |
 | `args` | object | full `tool_input`, redacted |

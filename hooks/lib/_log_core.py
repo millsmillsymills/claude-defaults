@@ -27,7 +27,6 @@ Compatible with Python 3.9+ (relies on PEP 563 deferred annotations).
 """
 from __future__ import annotations
 
-import errno
 import json
 import os
 import re
@@ -88,7 +87,7 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # "KEY"/"TOKEN"). Case-insensitive so lowercase/mixed-case names match too.
     (re.compile(
         r"([A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*"
-        r"_(?:PASSWORD|PASSWD|SECRET|TOKEN|KEY|PAT|CREDENTIAL|CREDENTIALS|AUTH))"
+        r"_(?:PASSWORD|PASSWD|SECRET|TOKEN|KEY|PAT|CREDENTIAL|CREDENTIALS|AUTH|URL))"
         r"(\s*=\s*)([^\s,;'\"]{1,})",
         re.IGNORECASE,
     ), r"\1\2***"),
@@ -258,7 +257,3 @@ def atomic_append(path: str, obj: dict) -> None:
         os.write(fd, line)
     finally:
         os.close(fd)
-
-
-# Re-export errno so callers don't need a separate import just to check ENOSPC.
-ENOSPC = errno.ENOSPC
