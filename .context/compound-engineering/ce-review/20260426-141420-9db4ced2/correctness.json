@@ -1,0 +1,56 @@
+{
+  "reviewer": "correctness",
+  "run_id": "20260426-141420-9db4ced2",
+  "findings": [
+    {
+      "id": "COR-01",
+      "title": "log-rotate.sh uses local-time date; log_tool_call.py writes UTC-named files — rotator silently misses target",
+      "severity": "high",
+      "confidence": 0.82,
+      "file": "hooks/log-rotate.sh",
+      "line": 20,
+      "fix": "Change `date +%Y-%m-%d` to `date -u +%Y-%m-%d`",
+      "new_issue": true
+    },
+    {
+      "id": "COR-02",
+      "title": "truncate_output silently writes over-max-bytes lines when all trimmable fields are <=256 bytes",
+      "severity": "medium",
+      "confidence": 0.85,
+      "file": "hooks/lib/_log_core.py",
+      "lines": [150, 151],
+      "related": ["#9"]
+    },
+    {
+      "id": "COR-03",
+      "title": "uninstall.sh restore loop runs in pipe subshell — cp failures silently swallowed",
+      "severity": "medium",
+      "confidence": 0.78,
+      "file": "scripts/uninstall.sh",
+      "line": 69,
+      "fix": "Use process substitution: while read -r rel; do ... done < <( cd \"$LATEST_BACKUP\" && find . -type f -print )"
+    },
+    {
+      "id": "COR-04",
+      "title": "install.sh --force settings duplicates all hook entries on repeated invocation",
+      "severity": "medium",
+      "confidence": 0.72,
+      "file": "scripts/install.sh",
+      "lines": [125, 160, 161],
+      "fix": "Deduplicate hook arrays: .[$event] = (($eh[$event] // []) + ($nh[$event] // [])) | unique_by(.hooks[0].command // (.hooks[0].prompt | tostring) // .)"
+    },
+    {
+      "id": "COR-05",
+      "title": "_call_id() produces microsecond precision; LOGGING.md and HOOKS.md claim nanosecond",
+      "severity": "low",
+      "confidence": 0.80,
+      "file": "hooks/lib/log_tool_call.py",
+      "line": 69
+    }
+  ],
+  "fixes_verified_in_pr": ["P1-1", "P1-2", "P1-3", "P1-4", "5e35b4f", "b55f17d", "10000e0"],
+  "fixes_with_gaps": [
+    {"commit": "96981e4", "gap": "log-rotate.sh was not updated to match UTC naming (COR-01)"},
+    {"commit": "e9b0610", "gap": "validate.sh line 41 still uses old broad walk (M-17)"}
+  ]
+}

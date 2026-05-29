@@ -78,10 +78,6 @@ Gzip-rotate today's log if it exceeds `CLAUDE_LOG_ROTATE_BYTES` (default 100 MB)
 
 Blocks `npm` commands when the cwd contains `pnpm-lock.yaml` or `yarn.lock`. **NOT wired up by default** — opt in by adding it to `settings.json` if you want strict enforcement.
 
-### `log-bash-commands.sh` (optional, PostToolUse Bash)
-
-Plain-text Bash command audit log to `~/.claude/bash-commands.log`. **NOT wired up by default** — superseded by the structured `log-tool-calls.sh`. Kept for back-compat / simple use.
-
 ### Anti-rationalization Stop hook (`type: "prompt"`)
 
 Inline prompt-type hook in `settings.json`. Sends Claude's final response to a fast model that returns `{"ok": false, "reason": "..."}` or `{"ok": true}`. If rejected, Claude must continue.

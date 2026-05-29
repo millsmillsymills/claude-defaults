@@ -24,6 +24,10 @@ FORCE=0
 COMPONENTS=()
 BACKUP_TS="$(date +%Y%m%d-%H%M%S)-$$"
 BACKUP_DIR="${CLAUDE_DIR}/backups/pre-claude-defaults-${BACKUP_TS}"
+# Records files install created fresh (no prior version) and home-dir backups,
+# so uninstall can reverse them. Files under ~/.claude that already existed are
+# captured by the backup snapshot; this manifest covers what that can't.
+MANIFEST="${CLAUDE_DIR}/.claude-defaults-install.manifest"
 
 usage() {
     echo "Usage: $0 [--dry-run] [--force] [component...]"
@@ -58,6 +62,22 @@ ensure_backup_dir() {
     mkdir -p "$BACKUP_DIR"
 }
 
+manifest_add() {
+    [ "$DRY_RUN" = "1" ] && return 0
+    mkdir -p "$(dirname "$MANIFEST")"
+    echo "$1" >> "$MANIFEST"
+}
+
+# Resolve a symlink to the real file it points at (absolute path), handling both
+# absolute and relative link targets. Empty output if it can't be resolved.
+resolve_link() {
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1" 2>/dev/null
+    else
+        readlink "$1" 2>/dev/null
+    fi
+}
+
 backup_existing() {
     local path="$1"
     [ -e "$path" ] || [ -L "$path" ] || return 0
@@ -66,7 +86,7 @@ backup_existing() {
         return 0
     fi
     ensure_backup_dir
-    local rel="${path#${CLAUDE_DIR}/}"
+    local rel="${path#"${CLAUDE_DIR}"/}"
     local target="${BACKUP_DIR}/${rel}"
     mkdir -p "$(dirname "$target")"
     mv "$path" "$target"
@@ -134,45 +154,57 @@ install_settings() {
             return
         fi
     fi
+    # Snapshot whatever is at the target (regular file or symlink) into the
+    # backup, then merge its content with the template. A symlink is resolved
+    # to its real file first -- moving the link instead would break a relative
+    # target and silently drop the user's settings.
+    local existing=""
     if [ -L "$target" ]; then
-        backup_existing "$target"
-    fi
-    if [ -f "$target" ]; then
-        if command -v jq >/dev/null 2>&1; then
-            backup_existing "$target"
-            # Re-create from backup since backup_existing moved it.
-            local backup_target
-            backup_target="${BACKUP_DIR}/$(basename "$target")"
-            jq -s '
-                .[0] as $existing | .[1] as $new |
-                $existing * $new |
-                .permissions.deny = (
-                    ($existing.permissions.deny // []) +
-                    ($new.permissions.deny // []) | unique
-                ) |
-                .permissions.allow = (
-                    ($existing.permissions.allow // []) +
-                    ($new.permissions.allow // []) | unique
-                ) |
-                .hooks = (
-                    ($existing.hooks // {}) as $eh |
-                    ($new.hooks // {}) as $nh |
-                    reduce ((($eh | keys) + ($nh | keys)) | unique[]) as $event ({};
-                        .[$event] = (($eh[$event] // []) + ($nh[$event] // []))
-                    )
-                )
-            ' "$backup_target" "${REPO_DIR}/settings.json" > "${target}.tmp"
-            # Validate before atomic rename
-            jq . < "${target}.tmp" >/dev/null
-            mv "${target}.tmp" "$target"
-            ok "merged settings into $target"
-        else
-            warn "jq not installed; cannot merge. Install jq first."
-            cp "${REPO_DIR}/settings.json" "$target"
-            ok "settings copied (no merge): $target"
+        ensure_backup_dir
+        local resolved
+        resolved=$(resolve_link "$target")
+        if [ -n "$resolved" ] && [ -f "$resolved" ]; then
+            cp -p "$resolved" "${BACKUP_DIR}/$(basename "$target")"
+            existing="${BACKUP_DIR}/$(basename "$target")"
+            log "backed up (resolved symlink): $target -> ${BACKUP_DIR}/$(basename "$target")"
         fi
+        rm -f "$target"
+    elif [ -f "$target" ]; then
+        backup_existing "$target"
+        existing="${BACKUP_DIR}/$(basename "$target")"
+    fi
+
+    if [ -n "$existing" ] && command -v jq >/dev/null 2>&1; then
+        jq -s '
+            .[0] as $existing | .[1] as $new |
+            $existing * $new |
+            .permissions.deny = (
+                ($existing.permissions.deny // []) +
+                ($new.permissions.deny // []) | unique
+            ) |
+            .permissions.allow = (
+                ($existing.permissions.allow // []) +
+                ($new.permissions.allow // []) | unique
+            ) |
+            .hooks = (
+                ($existing.hooks // {}) as $eh |
+                ($new.hooks // {}) as $nh |
+                reduce ((($eh | keys) + ($nh | keys)) | unique[]) as $event ({};
+                    .[$event] = (($eh[$event] // []) + ($nh[$event] // []) | unique)
+                )
+            )
+        ' "$existing" "${REPO_DIR}/settings.json" > "${target}.tmp"
+        # Validate before atomic rename
+        jq . < "${target}.tmp" >/dev/null
+        mv "${target}.tmp" "$target"
+        ok "merged settings into $target"
+    elif [ -n "$existing" ]; then
+        warn "jq not installed; cannot merge. Install jq first."
+        cp "${REPO_DIR}/settings.json" "$target"
+        ok "settings copied (no merge): $target"
     else
         cp "${REPO_DIR}/settings.json" "$target"
+        manifest_add "created ${target}"
         ok "settings -> $target"
     fi
 }
@@ -189,6 +221,19 @@ install_mcp() {
     if [ -f "$target" ] && [ "$FORCE" != "1" ]; then
         skip "$target (already exists; --force to overwrite)"
         return
+    fi
+
+    # We only reach here with the target absent or --force set. Back up an
+    # existing file before overwriting (it lives in $HOME, outside the
+    # ~/.claude backup snapshot, so record the backup path in the manifest);
+    # if it's a fresh creation, record that so uninstall can remove it.
+    if [ -f "$target" ]; then
+        ensure_backup_dir
+        cp -p "$target" "${BACKUP_DIR}/mcp.json"
+        log "backed up: $target -> ${BACKUP_DIR}/mcp.json"
+        manifest_add "mcpbackup ${BACKUP_DIR}/mcp.json"
+    else
+        manifest_add "created ${target}"
     fi
 
     if [ -n "${EXA_API_KEY:-}" ]; then
