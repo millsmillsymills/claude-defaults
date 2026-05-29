@@ -132,10 +132,15 @@ def _is_force_push(seg: list[str]) -> bool:
     """
     if "git" not in [_base(t) for t in seg] or "push" not in seg:
         return False
-    if not any(t in ("-f", "--force", "--force-with-lease") for t in seg):
-        return False
-    positionals = [t for t in seg[seg.index("push") + 1:] if not t.startswith("-")]
+    after_push = seg[seg.index("push") + 1:]
+    positionals = [t for t in after_push if not t.startswith("-")]
     branches = positionals[1:]  # first positional is the remote
+    # A leading `+` on a refspec (`git push origin +main`) is a force update
+    # even with no -f/--force flag; block it if it targets a protected branch.
+    if any(b.startswith("+") and _targets_protected_branch(b) for b in branches):
+        return True
+    if not any(t in ("-f", "--force", "--force-with-lease") for t in after_push):
+        return False
     return any(_targets_protected_branch(b) for b in branches) or not branches
 
 
@@ -183,7 +188,15 @@ def _nested_payloads(seg: list[str]):
     base = _base(seg[0])
     if base in _SHELL_WRAPPERS:
         for i, token in enumerate(seg):
-            if token == "-c" and i + 1 < len(seg):
+            # `-c <cmd>`, or a combined short-flag bundle ending in `c`
+            # (`bash -lc '...'`, `-ec`, `-xc`, `-ic`), carries the command
+            # string in the next token. Matching only `-c` let those wrappers
+            # smuggle a payload past every check.
+            is_dash_c = token == "-c" or (
+                len(token) > 1 and token[0] == "-"
+                and token[1] != "-" and token.endswith("c")
+            )
+            if is_dash_c and i + 1 < len(seg):
                 yield seg[i + 1]
                 break
     elif base == "eval":
@@ -236,11 +249,14 @@ def main() -> int:
     try:
         data = json.load(sys.stdin)
         cmd = data.get("tool_input", {}).get("command", "")
-    except (json.JSONDecodeError, AttributeError, ValueError):
+        if not isinstance(cmd, str) or not cmd:
+            return 0
+        reason = scan(cmd)
+    except Exception:  # noqa: BLE001 -- documented fail-open contract below
+        # Any parse/IO/edge-case error exits 0: this hook must never wedge the
+        # session, and permissions.deny is the hard backstop for rm -rf / sudo.
+        # A non-string command, malformed JSON, or a scan crash all land here.
         return 0
-    if not cmd:
-        return 0
-    reason = scan(cmd)
     if reason:
         print(f"BLOCKED: {reason}", file=sys.stderr)
         return 2

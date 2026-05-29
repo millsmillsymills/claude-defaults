@@ -93,6 +93,18 @@ expect_block "$SAFETY" "eval 'dd if=/dev/zero of=/dev/disk2'" "safety eval dd"
 expect_block "$SAFETY" "bash -c ':(){ :|:& };:'"   "safety bash -c fork bomb"
 # A quoted pattern that is only echoed (not executed) stays allowed even nested.
 expect_allow "$SAFETY" "bash -c 'echo \"rm -rf /\"'" "safety bash -c echo literal"
+# #52: combined short-flag wrappers (-lc/-ec/-xc/-ic) must not smuggle a payload.
+expect_block "$SAFETY" "bash -lc 'rm -rf /'"       "safety bash -lc rm-rf"
+expect_block "$SAFETY" "sh -ec 'rm -rf ~'"         "safety sh -ec rm-rf"
+expect_block "$SAFETY" "bash -xc 'mkfs.ext4 /dev/sda'" "safety bash -xc mkfs"
+expect_allow "$SAFETY" "bash -lc 'ls -la'"         "safety bash -lc benign"
+# #52: a `+refspec` is a force update even without -f; block protected targets.
+expect_block "$SAFETY" 'git push origin +main'     "safety +refspec force main"
+expect_block "$SAFETY" 'git push origin +HEAD:master' "safety +refspec force master"
+expect_allow "$SAFETY" 'git push origin +myfeature' "safety +refspec feature ok"
+# #52: a non-string command must fail open (exit 0), never crash with rc=1.
+[ "$(jq -nc '{tool_name:"Bash", tool_input:{command:123}}' | "$SAFETY" >/dev/null 2>&1; echo $?)" = "0" ] \
+  || fail_msg "safety: non-string command did not fail open (expected rc=0)"
 
 # === L1 + H10: enforce-package-manager.sh -- npm not at line start ===
 # The hook keys off a lockfile in CWD, so run each case from a temp pnpm project.
