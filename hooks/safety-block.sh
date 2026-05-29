@@ -5,6 +5,10 @@
 # Note: existing hooks/block-rm-rf.sh and hooks/block-push-main.sh remain
 # wired up alongside this one for back-compat. This script covers patterns
 # they don't (dd, mkfs, fork bombs, sudo rm, force-push variants, chmod 777).
+#
+# Patterns below intentionally contain the literal text "$HOME" and "~" (strings
+# a user might type), not shell expansions -- single quotes are correct here.
+# shellcheck disable=SC2016,SC2088
 
 set -uo pipefail
 
@@ -20,10 +24,41 @@ block() {
     exit 2
 }
 
-# rm -rf against root or home
-if echo "$S" | grep -qE '(^|[[:space:]])rm[[:space:]]+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)[a-zA-Z]*[[:space:]]+(/$|/[[:space:]]|/Users(/|[[:space:]])|~([[:space:]/]|$)|\$HOME)'; then
-    block "rm -rf against root, /Users, ~, or \$HOME. Use 'trash' or a specific path."
-fi
+# rm -rf against root or home. The recursive flag, force flag, and root/home
+# target must all belong to the SAME rm invocation (any flag arrangement: -rf,
+# -fr, -r -f, -Rf, --recursive --force), so flags/targets from an unrelated
+# command on the same line (cp -r /Users/x dst && rm -f junk) can't combine
+# into a false block.
+segment_is_rm_rf_protected() {
+    local recursive=0 force=0 protected=0 cmd_seen=0 tok
+    local -a toks
+    read -ra toks <<<"$1"
+    for tok in "${toks[@]}"; do
+        if [ "$cmd_seen" -eq 0 ]; then
+            case "$tok" in
+            *=* | sudo) continue ;;
+            rm) cmd_seen=1 ;;
+            *) return 1 ;;
+            esac
+            continue
+        fi
+        case "$tok" in
+        --recursive) recursive=1 ;;
+        --force) force=1 ;;
+        -*)
+            case "$tok" in *[rR]*) recursive=1 ;; esac
+            case "$tok" in *f*) force=1 ;; esac
+            ;;
+        / | /Users | /Users/* | '~' | '~/'* | '$HOME' | '$HOME/'*) protected=1 ;;
+        esac
+    done
+    [ "$recursive" -eq 1 ] && [ "$force" -eq 1 ] && [ "$protected" -eq 1 ]
+}
+while IFS= read -r segment || [ -n "$segment" ]; do
+    if segment_is_rm_rf_protected "$segment"; then
+        block "rm -rf against root, /Users, ~, or \$HOME. Use 'trash' or a specific path."
+    fi
+done < <(printf '%s' "$S" | sed -E 's/&&|\|\||;|\|/\n/g')
 
 # sudo rm -rf anything
 if echo "$S" | grep -qE '(^|[[:space:]])sudo[[:space:]]+rm[[:space:]]+-[a-zA-Z]*r[a-zA-Z]*f'; then
