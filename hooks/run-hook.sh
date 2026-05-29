@@ -1,29 +1,37 @@
 #!/usr/bin/env bash
 # Resilient hook dispatcher. settings.json routes every command-type hook
-# through this wrapper so a missing directory or a stale/renamed hook script
-# can never surface a "/bin/sh: ...: No such file or directory" failure.
+# through this wrapper as `run-hook.sh <hook-name> [args...]`, so a missing
+# directory or a stale/renamed hook script can never surface a
+# "/bin/sh: ...: No such file or directory" failure. See docs/HOOKS.md.
 #
-# Wire up in settings.json:
-#   command: "$HOME/.claude/hooks/run-hook.sh <hook-name> [args...]"
-# e.g.
-#   command: "$HOME/.claude/hooks/run-hook.sh safety-block.py"
-#   command: "$HOME/.claude/hooks/run-hook.sh log-tool-calls.sh pre"
-#
-# Behavior:
-#   - Ensures the runtime dirs (logs/, hooks/lib/) exist.
-#   - Resolves its own symlink back to the repo so it can run the real hook
-#     directly even if ~/.claude/hooks/<name> is missing or dangling, and
-#     opportunistically recreates that symlink.
-#   - If the hook truly cannot be found, warns on stderr and exits 0 so the
-#     tool call is NOT blocked by infrastructure breakage. (PreToolUse blocking
-#     hooks fail OPEN here; doctor.sh / install.sh restore them between runs.)
-#
-# Never exit non-zero for our own plumbing errors -- only the real hook's exit
-# code (which may be 2 to block) is propagated.
+# Invariant: never exit non-zero for OUR OWN plumbing errors -- only the real
+# hook's exit code (which may be 2 to block) is propagated. A hook that can't be
+# found fails OPEN (exit 0), with a loud, durable signal for security hooks.
+# Link/dir repair belongs to doctor.sh, not this hot path.
 set -uo pipefail
 
 CLAUDE_DIR="${HOME}/.claude"
 mkdir -p "${CLAUDE_DIR}/logs" "${CLAUDE_DIR}/hooks/lib" 2>/dev/null || true
+
+# Hooks whose absence leaves the user UNPROTECTED. The deny-list in settings.json
+# only backstops the rm-rf/sudo classes; these guard dd/mkfs/fdisk/fork-bomb/
+# chmod-777/force-push too. A silent skip of one is the worst failure mode, so
+# any skip below is logged durably and warned loudly rather than failing open
+# quietly.
+SECURITY_HOOKS=" safety-block.py block-rm-rf.sh block-push-main.sh "
+
+# Record a security hook being skipped to a durable log AND stderr, so a
+# never-ran guard is visible after the fact instead of silently allowing.
+warn_security_skip() {
+  local reason="$1"
+  case "$SECURITY_HOOKS" in
+  *" ${name} "*)
+    echo "run-hook.sh: SECURITY hook '${name}' SKIPPED (${reason}); destructive-command guard NOT enforced." >&2
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') ${name} ${reason}" \
+      >>"${CLAUDE_DIR}/logs/hook-errors.log" 2>/dev/null || true
+    ;;
+  esac
+}
 
 if [ "$#" -lt 1 ]; then
   echo "run-hook.sh: no hook name given" >&2
@@ -51,25 +59,30 @@ repo_hooks="$(cd "$(dirname "$self_real")" 2>/dev/null && pwd || true)"
 installed="${CLAUDE_DIR}/hooks/${name}"
 repo_src="${repo_hooks:+${repo_hooks}/${name}}"
 
-# Pick a runnable target: prefer the installed symlink if it resolves to a real
-# file, else fall back to the repo copy and (re)create the symlink for next time.
+# Pick a runnable target: the installed path if it resolves to a real file
+# (-f follows the symlink, so a dangling link falls through), else the repo copy.
+# Don't rewrite the symlink here -- silently mutating a security-relevant path on
+# every tool call is the wrong layer; doctor.sh / session-heal.sh repair links.
 target=""
 if [ -f "$installed" ]; then
   target="$installed"
 elif [ -n "$repo_src" ] && [ -f "$repo_src" ]; then
   target="$repo_src"
-  [ -L "$installed" ] && rm -f "$installed" 2>/dev/null || true
-  ln -s "$repo_src" "$installed" 2>/dev/null || true
 fi
 
 if [ -z "$target" ]; then
-  echo "run-hook.sh: hook '${name}' not found (looked in ${installed} and ${repo_src:-<repo unresolved>}); skipping. Run scripts/doctor.sh to repair." >&2
+  warn_security_skip "not found"
+  echo "run-hook.sh: hook '${name}' not found (looked in ${installed} and" >&2
+  echo "  ${repo_src:-<repo unresolved>}); skipping. Run scripts/doctor.sh to repair." >&2
   exit 0
 fi
 
 case "$name" in
 *.py)
-  command -v python3 >/dev/null 2>&1 || exit 0
+  if ! command -v python3 >/dev/null 2>&1; then
+    warn_security_skip "python3 unavailable"
+    exit 0
+  fi
   exec python3 "$target" "$@"
   ;;
 *)

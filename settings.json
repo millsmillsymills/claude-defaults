@@ -117,7 +117,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/run-hook.sh session-heal.sh"
+            "command": "$HOME/.claude/hooks/session-heal.sh"
           }
         ]
       }

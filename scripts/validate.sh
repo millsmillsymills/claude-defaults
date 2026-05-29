@@ -54,9 +54,12 @@ elif [ -f "${CLAUDE_DIR}/settings.json" ]; then
         [ $events[] as $e | (.hooks[$e] // [])[]?.hooks[]?.command ]
         | .[] | select(. != null)
     ' --args "${HOOK_EVENTS[@]}" <"${CLAUDE_DIR}/settings.json" 2>/dev/null)
-  for hook_name in safety-block safety-warn log-tool-calls log-rotate; do
-    # Match both direct paths (hooks/<name>.sh) and the run-hook.sh wrapper form
-    # (run-hook.sh <name>.sh), where the hook name appears as an argument.
+  # run-hook.sh is load-bearing: every command hook is invoked through it, so a
+  # missing wrapper silently breaks all of them. Check it explicitly alongside
+  # the security/logging hooks it dispatches. The hook name appears as a bare
+  # argument to run-hook.sh, so match the basename anywhere in the command
+  # rather than anchoring on a hooks/ path prefix.
+  for hook_name in run-hook safety-block block-rm-rf block-push-main safety-warn log-tool-calls log-rotate; do
     if echo "$wired" | grep -qE "${hook_name}\.(sh|py)($|[[:space:]])"; then
       pass "settings.json wires ${hook_name}"
     else
