@@ -149,6 +149,112 @@ bash "$REPO_DIR/scripts/uninstall.sh" >/dev/null || fail_msg "M7/M8: uninstall f
 export HOME="$HOME2_OLD"
 rm -rf "$TEST_HOME6"
 
+# #39-1: a pre-existing ~/.mcp.json is backed up into the snapshot dir, but
+# uninstall must NOT leave a stray ~/.claude/mcp.json behind from restoring it.
+TEST_HOME7=$(mktemp -d -t claude-defaults-strayy.XXXXXX)
+export HOME="$TEST_HOME7"
+mkdir -p "$TEST_HOME7/.claude"
+echo '{"mcpServers":{"mine":{"command":"foo"}}}' > "$TEST_HOME7/.mcp.json"
+bash "$REPO_DIR/scripts/install.sh" --force mcp settings >/dev/null || fail_msg "#39-1: install failed"
+bash "$REPO_DIR/scripts/uninstall.sh" >/dev/null || fail_msg "#39-1: uninstall failed"
+[ -e "$TEST_HOME7/.claude/mcp.json" ] && fail_msg "#39-1: stray ~/.claude/mcp.json left after uninstall"
+# Original ~/.mcp.json content must be restored, not removed.
+got=$(jq -r '.mcpServers.mine.command // ""' "$TEST_HOME7/.mcp.json" 2>/dev/null)
+[ "$got" = "foo" ] || fail_msg "#39-1: ~/.mcp.json not restored to original (got=$got)"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME7"
+
+# #39-3: a `created` file the user edits post-install must be preserved by
+# uninstall (checksum guard), not silently deleted.
+TEST_HOME8=$(mktemp -d -t claude-defaults-edited.XXXXXX)
+export HOME="$TEST_HOME8"
+mkdir -p "$TEST_HOME8/.claude"
+bash "$REPO_DIR/scripts/install.sh" mcp >/dev/null || fail_msg "#39-3: install failed"
+[ -f "$TEST_HOME8/.mcp.json" ] || fail_msg "#39-3: .mcp.json not created"
+echo '{"mcpServers":{"useredit":{"command":"bar"}}}' > "$TEST_HOME8/.mcp.json"
+bash "$REPO_DIR/scripts/uninstall.sh" >/dev/null || fail_msg "#39-3: uninstall failed"
+[ -f "$TEST_HOME8/.mcp.json" ] || fail_msg "#39-3: user-edited created file deleted by uninstall"
+got=$(jq -r '.mcpServers.useredit.command // ""' "$TEST_HOME8/.mcp.json" 2>/dev/null)
+[ "$got" = "bar" ] || fail_msg "#39-3: user edit not preserved (got=$got)"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME8"
+
+# #17: a --force settings re-run on already-merged settings must not duplicate
+# entries under ANY hook event (not just PreToolUse). Covers the dedup intent.
+TEST_HOME7=$(mktemp -d -t claude-defaults-dedup.XXXXXX)
+export HOME="$TEST_HOME7"
+mkdir -p "$TEST_HOME7/.claude"
+bash "$REPO_DIR/scripts/install.sh" settings >/dev/null || fail_msg "#17: first settings install failed"
+for ev in PreToolUse PostToolUse Stop SessionEnd; do
+    before=$(jq "[.hooks.${ev}[]?.hooks[]?] | length" "$TEST_HOME7/.claude/settings.json")
+    bash "$REPO_DIR/scripts/install.sh" --force settings >/dev/null || fail_msg "#17: --force settings failed ($ev)"
+    after=$(jq "[.hooks.${ev}[]?.hooks[]?] | length" "$TEST_HOME7/.claude/settings.json")
+    [ "$before" = "$after" ] || fail_msg "#17: ${ev} hook count grew $before -> $after on --force re-merge"
+done
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME7"
+
+# #17: a Stop hook wired to a repo script must be recognized by the idempotency
+# guard. Pre-seed settings.json with ONLY a Stop hook pointing at a repo script;
+# a non-force re-install must detect it and skip (so no duplicate Stop hook).
+TEST_HOME8=$(mktemp -d -t claude-defaults-stop.XXXXXX)
+export HOME="$TEST_HOME8"
+mkdir -p "$TEST_HOME8/.claude"
+cat > "$TEST_HOME8/.claude/settings.json" <<'PRE'
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "$HOME/.claude/hooks/log-rotate.sh"}]}
+    ]
+  }
+}
+PRE
+out=$(bash "$REPO_DIR/scripts/install.sh" settings 2>&1) || fail_msg "#17: Stop-guard install failed"
+echo "$out" | grep -q "already merged" || fail_msg "#17: idempotency guard did not recognize Stop-only install"
+stop_count=$(jq '[.hooks.Stop[]?.hooks[]?] | length' "$TEST_HOME8/.claude/settings.json")
+[ "$stop_count" = "1" ] || fail_msg "#17: Stop hook count=$stop_count after guarded re-install (expected 1, no dup)"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME8"
+
+# #42: validate.sh smoke test — fresh install exits 0; a tampered install
+# (removed hook symlink) exits non-zero.
+TEST_HOME9=$(mktemp -d -t claude-defaults-validate.XXXXXX)
+export HOME="$TEST_HOME9"
+mkdir -p "$TEST_HOME9/.claude"
+bash "$REPO_DIR/scripts/install.sh" >/dev/null || fail_msg "#42: fresh install failed"
+bash "$REPO_DIR/scripts/validate.sh" >/dev/null || fail_msg "#42: validate.sh non-zero on fresh install"
+rm -f "$TEST_HOME9/.claude/hooks/safety-block.sh"
+bash "$REPO_DIR/scripts/validate.sh" >/dev/null && fail_msg "#42: validate.sh exited 0 on tampered install"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME9"
+
+# #55: a partial restore failure must surface as a non-zero exit, not a
+# stderr-only warning automation can't detect. Inject a failure by replacing an
+# installed symlink with an unwritable regular file at a path uninstall must
+# restore from backup; the restoring cp then fails.
+if [ "$(id -u)" -ne 0 ]; then
+    TEST_HOME10=$(mktemp -d -t claude-defaults-restorefail.XXXXXX)
+    export HOME="$TEST_HOME10"
+    mkdir -p "$TEST_HOME10/.claude"
+    # Pre-existing real file so install backs it up before symlinking.
+    echo "original statusline" > "$TEST_HOME10/.claude/statusline.sh"
+    bash "$REPO_DIR/scripts/install.sh" >/dev/null || fail_msg "#55: install failed"
+    # Swap the installed symlink for an unwritable file; uninstall's symlink
+    # sweep skips non-symlinks, so the restore step hits it and cp fails.
+    rm -f "$TEST_HOME10/.claude/statusline.sh"
+    echo "blocker" > "$TEST_HOME10/.claude/statusline.sh"
+    chmod 000 "$TEST_HOME10/.claude/statusline.sh"
+    if bash "$REPO_DIR/scripts/uninstall.sh" >/dev/null 2>&1; then
+        fail_msg "#55: uninstall exited 0 despite a failed restore"
+    fi
+    chmod 644 "$TEST_HOME10/.claude/statusline.sh" 2>/dev/null || true
+    export HOME="$HOME2_OLD"
+    rm -rf "$TEST_HOME10"
+else
+    echo "  SKIP #55 restore-failure test (running as root; mode 000 is bypassed)"
+fi
+
 if [ "$fail" -eq 0 ]; then
     echo "test-install: PASS"
 else

@@ -12,10 +12,25 @@ MANIFEST="${CLAUDE_DIR}/.claude-defaults-install.manifest"
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
 
+# Set when any restore step fails, so a partial restore is reported via a
+# non-zero exit instead of a stderr-only warning automation can't detect.
+RESTORE_FAILED=0
+
 log() { echo "  $1"; }
 ok()  { echo "  OK: $1"; }
 warn(){ echo "  WARN: $1" >&2; }
 dry() { echo "  DRY-RUN: $1"; }
+
+# Print the sha256 hex digest of a file, empty if no checksum tool is available.
+# Used to compare a `created` file's current content against the digest install
+# recorded, so post-install edits are preserved instead of deleted.
+file_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" 2>/dev/null | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'
+    fi
+}
 
 # Find latest backup (timestamped names sort lexically, newest last)
 LATEST_BACKUP=$(find "${CLAUDE_DIR}/backups" -maxdepth 1 -type d -name 'pre-claude-defaults-*' 2>/dev/null | sort | tail -n1 || true)
@@ -67,13 +82,28 @@ if [ -n "$LATEST_BACKUP" ] && [ -d "$LATEST_BACKUP" ]; then
     else
         # Walk the backup, copy each file back to its corresponding location.
         # We only restore files that were explicitly backed up by install.
-        ( cd "$LATEST_BACKUP" && find . -type f -print ) | while read -r rel; do
-            src="${LATEST_BACKUP}/${rel#./}"
-            dst="${CLAUDE_DIR}/${rel#./}"
+        #
+        # Process substitution (not a pipe) keeps the loop body in the current
+        # shell so `set -euo pipefail` propagates; a cp failure is observable
+        # here instead of being swallowed in a pipe subshell.
+        #
+        # mcp.json at the snapshot root is the home-dir ~/.mcp.json backup, not
+        # a ~/.claude/ file. Restoring it via this loop would land a stray
+        # ~/.claude/mcp.json that never existed. The manifest's `mcpbackup`
+        # entry restores it to the correct ~/.mcp.json, so skip it here.
+        while IFS= read -r -d '' rel; do
+            rel="${rel#./}"
+            [ "$rel" = "mcp.json" ] && continue
+            src="${LATEST_BACKUP}/${rel}"
+            dst="${CLAUDE_DIR}/${rel}"
             mkdir -p "$(dirname "$dst")"
-            cp -p "$src" "$dst"
-            log "restored: $dst"
-        done
+            if cp -p "$src" "$dst"; then
+                log "restored: $dst"
+            else
+                warn "failed to restore $dst — partial restore"
+                RESTORE_FAILED=1
+            fi
+        done < <(cd "$LATEST_BACKUP" && find . -type f -print0)
     fi
 fi
 
@@ -82,12 +112,20 @@ fi
 # already existed; the manifest covers files install created from nothing
 # (settings.json, ~/.mcp.json) and ~/.mcp.json overwrites it backed up.
 if [ -f "$MANIFEST" ]; then
-    while read -r action arg; do
+    while read -r action arg extra; do
         [ -n "${action:-}" ] || continue
         case "$action" in
             created)
+                # `extra` is the sha256 install recorded for the file's original
+                # content (empty for manifests written before checksums existed).
+                # If the file's current content no longer matches, the user has
+                # edited it post-install; leave it in place rather than delete.
                 if [ -f "$arg" ] && [ ! -L "$arg" ]; then
-                    if [ "$DRY_RUN" = "1" ]; then
+                    current=""
+                    [ -n "$extra" ] && current=$(file_sha256 "$arg")
+                    if [ -n "$extra" ] && [ -n "$current" ] && [ "$current" != "$extra" ]; then
+                        warn "kept (edited since install): $arg"
+                    elif [ "$DRY_RUN" = "1" ]; then
                         dry "remove install-created file $arg"
                     else
                         rm -f "$arg"
@@ -95,13 +133,21 @@ if [ -f "$MANIFEST" ]; then
                     fi
                 fi
                 ;;
+            wassymlink)
+                # install resolved a symlinked settings.json and backed up its
+                # content; the restore above wrote a plain file where a symlink
+                # was. Recreating the link is out of scope — just warn.
+                warn "restored $arg as a regular file; it was originally a symlink to ${extra:-?} (link not recreated)"
+                ;;
             mcpbackup)
                 if [ -f "$arg" ]; then
                     if [ "$DRY_RUN" = "1" ]; then
                         dry "restore $arg -> ${HOME}/.mcp.json"
-                    else
-                        cp -p "$arg" "${HOME}/.mcp.json"
+                    elif cp -p "$arg" "${HOME}/.mcp.json"; then
                         ok "restored: ${HOME}/.mcp.json"
+                    else
+                        warn "failed to restore ${HOME}/.mcp.json — partial restore"
+                        RESTORE_FAILED=1
                     fi
                 fi
                 ;;
@@ -111,4 +157,8 @@ if [ -f "$MANIFEST" ]; then
 fi
 
 echo ""
+if [ "$RESTORE_FAILED" = "1" ]; then
+    echo "Done with errors: one or more files could not be restored (see WARN above)." >&2
+    exit 1
+fi
 echo "Done."

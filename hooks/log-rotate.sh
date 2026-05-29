@@ -26,10 +26,28 @@ if [ -f "$today_log" ]; then
     size=$(stat -f%z "$today_log" 2>/dev/null || stat -c%s "$today_log" 2>/dev/null || echo 0)
     if [ "$size" -ge "$ROTATE_BYTES" ]; then
         n=1
-        while [ -e "${today_log}.${n}.gz" ]; do
+        while [ -e "${today_log}.${n}.gz" ] || [ -e "${today_log}.${n}.rotating" ]; do
             n=$((n + 1))
         done
-        gzip -c "$today_log" > "${today_log}.${n}.gz" && rm "$today_log"
+        # Rotate without a delete-after-read window. The old code gzipped the
+        # live log then rm'd it; any tool call that appended between gzip's EOF
+        # read and the rm was silently dropped — a window mid-session rotation
+        # makes more reachable with parallel agents sharing this dir. Instead,
+        # rename the live log aside first (rename is atomic): appends after this
+        # point open the path fresh and land in a new today_log, never in the
+        # file we are about to archive. Then gzip the renamed copy and verify it
+        # before deleting. A bad archive (ENOSPC, absorbed SIGPIPE) leaves the
+        # renamed log in place — data preserved, never destroyed under a broken
+        # .gz, and never clobbering a today_log a concurrent writer recreated.
+        rotating="${today_log}.${n}.rotating"
+        if mv "$today_log" "$rotating" 2>/dev/null; then
+            tmp_gz="${today_log}.${n}.gz.tmp"
+            if gzip -c "$rotating" > "$tmp_gz" && gzip -t "$tmp_gz" 2>/dev/null; then
+                mv "$tmp_gz" "${today_log}.${n}.gz" && rm -f "$rotating"
+            else
+                rm -f "$tmp_gz"
+            fi
+        fi
     fi
 fi
 

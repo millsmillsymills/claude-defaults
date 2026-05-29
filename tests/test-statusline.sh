@@ -31,6 +31,15 @@ out=$(printf '%s' "$json" | run_statusline)
 echo "$out" | grep -qF 'Opus 4' || fail_msg "multi-word model mangled: $out"
 echo "$out" | grep -qF '$1.23' || fail_msg "cost shifted by model split: $out"
 
+# #40: remaining_percentage >100 yields ctx_used <0, which must clamp to [0,100]
+# (no negative percentage rendered, bar well-formed at 0%).
+json='{"workspace":{"current_dir":"/tmp"},"model":{"display_name":"Opus"},"context_window":{"remaining_percentage":150}}'
+out=$(printf '%s' "$json" | run_statusline)
+rc=$?
+[ "$rc" -eq 0 ] || fail_msg "ctx >100: exit $rc"
+echo "$out" | grep -qE -- '-[0-9]+%' && fail_msg "ctx >100: negative percentage rendered: $out"
+echo "$out" | grep -qF '0%' || fail_msg "ctx >100: not clamped to 0%: $out"
+
 # M10: empty stdin must degrade gracefully, not exit non-zero.
 out=$(printf '' | run_statusline)
 rc=$?

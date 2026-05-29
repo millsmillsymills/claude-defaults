@@ -29,6 +29,10 @@ BACKUP_DIR="${CLAUDE_DIR}/backups/pre-claude-defaults-${BACKUP_TS}"
 # captured by the backup snapshot; this manifest covers what that can't.
 MANIFEST="${CLAUDE_DIR}/.claude-defaults-install.manifest"
 
+# shellcheck source=scripts/hook-events.sh
+. "$(dirname "$0")/hook-events.sh"
+hook_events_load
+
 usage() {
     echo "Usage: $0 [--dry-run] [--force] [component...]"
     echo ""
@@ -66,6 +70,17 @@ manifest_add() {
     [ "$DRY_RUN" = "1" ] && return 0
     mkdir -p "$(dirname "$MANIFEST")"
     echo "$1" >> "$MANIFEST"
+}
+
+# Print the sha256 hex digest of a file, empty if no checksum tool is available.
+# Recorded in the manifest for `created` entries so uninstall can detect
+# post-install edits and refuse to delete a file the user has changed.
+file_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" 2>/dev/null | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'
+    fi
 }
 
 # Resolve a symlink to the real file it points at (absolute path), handling both
@@ -142,14 +157,25 @@ install_settings() {
     # walk to specific hook-event paths. The previous walk could false-positive
     # on any nested object with a `.command` field referencing a hook script
     # name (e.g. inside a comment field, or in an unrelated config section).
+    #
+    # Issue #17: inspect the full canonical event set (shared via
+    # hook-events.sh), not just PreToolUse/PostToolUse/SessionEnd. A Stop-only
+    # partial install was previously undetected, so a re-merge duplicated the
+    # Stop hook. Match any repo hook-script basename under any event.
     if [ "$FORCE" != "1" ] && [ -f "$target" ] && command -v jq >/dev/null 2>&1; then
-        if jq -r '
-            (.hooks.PreToolUse // [])[]?.hooks[]?.command,
-            (.hooks.PostToolUse // [])[]?.hooks[]?.command,
-            (.hooks.SessionEnd // [])[]?.hooks[]?.command
-            | select(. != null)
-        ' "$target" 2>/dev/null \
-            | grep -qE 'safety-block\.sh|safety-warn\.sh|log-tool-calls\.sh|log-rotate\.sh'; then
+        local hook_re=""
+        for h in "${REPO_DIR}"/hooks/*.sh; do
+            [ -f "$h" ] || continue
+            local b; b=$(basename "$h")
+            hook_re="${hook_re:+${hook_re}|}${b//./\\.}"
+        done
+        if [ -n "$hook_re" ] && jq -r '
+            ($ARGS.positional) as $events |
+            [ $events[] as $e |
+                (.hooks[$e] // [])[]?.hooks[]? | (.command // .prompt) ]
+            | .[] | select(. != null)
+        ' --args "${HOOK_EVENTS[@]}" < "$target" 2>/dev/null \
+            | grep -qE "$hook_re"; then
             ok "$target (already merged with claude-defaults hooks — skipping)"
             return
         fi
@@ -167,6 +193,9 @@ install_settings() {
             cp -p "$resolved" "${BACKUP_DIR}/$(basename "$target")"
             existing="${BACKUP_DIR}/$(basename "$target")"
             log "backed up (resolved symlink): $target -> ${BACKUP_DIR}/$(basename "$target")"
+            # Record that the original was a symlink so uninstall can warn that
+            # it restored content as a plain file rather than recreating the link.
+            manifest_add "wassymlink ${target} ${resolved}"
         fi
         rm -f "$target"
     elif [ -f "$target" ]; then
@@ -204,7 +233,7 @@ install_settings() {
         ok "settings copied (no merge): $target"
     else
         cp "${REPO_DIR}/settings.json" "$target"
-        manifest_add "created ${target}"
+        manifest_add "created ${target} $(file_sha256 "$target")"
         ok "settings -> $target"
     fi
 }
@@ -227,13 +256,14 @@ install_mcp() {
     # existing file before overwriting (it lives in $HOME, outside the
     # ~/.claude backup snapshot, so record the backup path in the manifest);
     # if it's a fresh creation, record that so uninstall can remove it.
+    local fresh=0
     if [ -f "$target" ]; then
         ensure_backup_dir
         cp -p "$target" "${BACKUP_DIR}/mcp.json"
         log "backed up: $target -> ${BACKUP_DIR}/mcp.json"
         manifest_add "mcpbackup ${BACKUP_DIR}/mcp.json"
     else
-        manifest_add "created ${target}"
+        fresh=1
     fi
 
     if [ -n "${EXA_API_KEY:-}" ]; then
@@ -245,6 +275,12 @@ install_mcp() {
         jq 'del(.mcpServers.exa)' \
             "${REPO_DIR}/mcp-template.json" > "$target"
         ok "mcp config -> $target (exa removed -- set EXA_API_KEY to include)"
+    fi
+
+    # Record the checksum after writing so uninstall can detect post-install
+    # edits and refuse to delete a file the user has since changed.
+    if [ "$fresh" = "1" ]; then
+        manifest_add "created ${target} $(file_sha256 "$target")"
     fi
 }
 
