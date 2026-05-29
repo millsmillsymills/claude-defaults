@@ -76,6 +76,8 @@
       "Read(~/.azure/**)",
       "Read(~/.config/gh/**)",
       "Read(~/.git-credentials)",
+      "Read(~/.bashrc)",
+      "Read(~/.zshrc)",
       "Read(~/.docker/config.json)",
       "Read(~/.kube/**)",
       "Read(~/.npmrc)",
