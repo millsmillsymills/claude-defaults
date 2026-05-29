@@ -119,7 +119,7 @@ Claude Code has a native sandbox that provides filesystem and network isolation 
 - **Cloud credentials** -- `~/.aws/**`, `~/.azure/**`, `~/.kube/**`, `~/.docker/config.json`
 - **Package registry tokens** -- `~/.npmrc`, `~/.npm/**`, `~/.pypirc`, `~/.gem/credentials`
 - **Git credentials** -- `~/.git-credentials`, `~/.config/gh/**`
-- **Shell config** -- `~/.bashrc`, `~/.zshrc` (edit denied, prevents backdoor planting)
+- **Shell config** -- `~/.bashrc`, `~/.bash_profile`, `~/.bash_login`, `~/.profile`, `~/.zshrc`, `~/.zprofile`, `~/.zshenv` (edit denied, prevents backdoor planting)
 - **macOS keychain** -- `~/Library/Keychains/**`
 - **Crypto wallets** -- metamask, electrum, exodus, phantom, solflare app data
 

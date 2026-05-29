@@ -191,6 +191,26 @@ def truncate_output(obj: dict, max_bytes: int) -> dict:
     if truncated_total > 0:
         output["_truncated_bytes"] = truncated_total
 
+    # The per-field loop respects a 256-byte floor and skips fields already at
+    # or under it, so a payload whose envelope plus two short fields still
+    # exceeds max_bytes would otherwise be written oversize. Hard-truncate
+    # below the floor (stdout first, since it is usually larger) to enforce the
+    # per-line guarantee. The 64-byte margin leaves room for the marker.
+    for key in ("stdout", "stderr"):
+        serialized = json.dumps(obj, ensure_ascii=False)
+        overhead = len((serialized + "\n").encode("utf-8")) - max_bytes
+        if overhead <= 0:
+            break
+        v = output.get(key)
+        if not isinstance(v, str):
+            continue
+        encoded = v.encode("utf-8")
+        keep = max(0, len(encoded) - overhead - 64)
+        if keep >= len(encoded):
+            continue
+        output[key] = encoded[:keep].decode("utf-8", errors="replace")
+        output["_truncated_bytes"] = output.get("_truncated_bytes", 0) + (len(encoded) - keep)
+
     return obj
 
 
