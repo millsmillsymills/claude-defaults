@@ -2,6 +2,19 @@
 
 Claude Code configuration defaults. Covers sandboxing, permissions, hooks, skills, MCP servers, and usage patterns we've found effective across security audits, development, and research.
 
+## Sibling workspaces
+
+`claude-defaults` is the global config repo. For domain-specific Claude Code work, four sibling workspace-defaults repos extend the same install pattern:
+
+| Repo | Active folder | Purpose |
+|---|---|---|
+| `claude-plugin-dev-defaults` | `~/Desktop/Projects/claude-plugin-dev/` | Claude Code plugin development |
+| `claude-skill-dev-defaults`  | `~/Desktop/Projects/claude-skill-dev/`  | Standalone skill development |
+| `mcp-server-dev-defaults`    | `~/Desktop/Projects/mcp-server-dev/`    | MCP server development (Python/Go/TS) |
+| `agent-sdk-dev-defaults`     | `~/Desktop/Projects/agent-sdk-dev/`     | Claude Agent SDK app development |
+
+Each enables a specialized plugin set on top of the global 10. See the spec at `docs/superpowers/specs/2026-05-20-claude-dev-setup-optimization-design.md` and the implementation plan at `docs/superpowers/plans/2026-05-20-claude-dev-setup-optimization.md`.
+
 ## First-time setup
 
 ```bash
