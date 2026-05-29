@@ -8,6 +8,7 @@ TESTS=(
     tests/test-redaction.sh
     tests/test-hooks.sh
     tests/test-install.sh
+    tests/test-statusline.sh
 )
 
 fail=0
