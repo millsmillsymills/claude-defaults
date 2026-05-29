@@ -204,6 +204,15 @@ install_settings() {
     existing="${BACKUP_DIR}/$(basename "$target")"
   fi
 
+  # Hook merge: per event, drop the existing groups that are ours (any command
+  # referencing /.claude/hooks/) and append the template's groups, then unique.
+  # - Dropping ours-then-replacing strands no renamed hook: a stale group calling
+  #   the old name is ours, so it's removed and the template's new-name group
+  #   takes its place (a plain concat + unique kept both as distinct objects).
+  # - User-authored groups (and whole events only the user has) are not ours, so
+  #   they survive untouched.
+  # - The final unique collapses identical groups, including the prompt-type Stop
+  #   hook that carries no command for the ours-test to match.
   if [ -n "$existing" ] && command -v jq >/dev/null 2>&1; then
     jq -s '
             .[0] as $existing | .[1] as $new |
@@ -220,7 +229,16 @@ install_settings() {
                 ($existing.hooks // {}) as $eh |
                 ($new.hooks // {}) as $nh |
                 reduce ((($eh | keys) + ($nh | keys)) | unique[]) as $event ({};
-                    .[$event] = (($eh[$event] // []) + ($nh[$event] // []) | unique)
+                    .[$event] = (
+                        [ ($eh[$event] // [])[]
+                          | select(
+                              [ .hooks[]?.command // "" ]
+                              | map(contains("/.claude/hooks/")) | any | not
+                            )
+                        ]
+                        + ($nh[$event] // [])
+                        | unique
+                    )
                 )
             )
         ' "$existing" "${REPO_DIR}/settings.json" >"${target}.tmp"
