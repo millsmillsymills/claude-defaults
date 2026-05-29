@@ -40,6 +40,7 @@ def main() -> int:
         print(f"redact: input is not valid JSON: {exc}", file=sys.stderr)
         return 1
     json.dump(redact_value(data), sys.stdout)
+    sys.stdout.write("\n")
     return 0
 
 
