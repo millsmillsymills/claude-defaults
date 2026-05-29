@@ -67,6 +67,7 @@ for path in \
     "${CLAUDE_DIR}/CLAUDE.md" \
     "${CLAUDE_DIR}/statusline.sh" \
     "${CLAUDE_DIR}"/hooks/*.sh \
+    "${CLAUDE_DIR}"/hooks/*.py \
     "${CLAUDE_DIR}"/hooks/lib/* \
     "${CLAUDE_DIR}"/commands/*.md \
     "${CLAUDE_DIR}"/agents/*.md \

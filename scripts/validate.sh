@@ -52,10 +52,10 @@ elif [ -f "${CLAUDE_DIR}/settings.json" ]; then
         | .[] | select(. != null)
     ' --args "${HOOK_EVENTS[@]}" < "${CLAUDE_DIR}/settings.json" 2>/dev/null)
     for hook_name in safety-block safety-warn log-tool-calls log-rotate; do
-        if echo "$wired" | grep -qE "hooks/${hook_name}\.sh($|[[:space:]])"; then
-            pass "settings.json wires ${hook_name}.sh"
+        if echo "$wired" | grep -qE "hooks/${hook_name}\.(sh|py)($|[[:space:]])"; then
+            pass "settings.json wires ${hook_name}"
         else
-            fail "settings.json does NOT wire ${hook_name}.sh under a hook event"
+            fail "settings.json does NOT wire ${hook_name} under a hook event"
         fi
     done
 else
@@ -70,7 +70,7 @@ declare -a EXPECTED_SYMLINKS=(
     "${CLAUDE_DIR}/CLAUDE.md|${REPO_DIR}/claude-md-template.md"
     "${CLAUDE_DIR}/statusline.sh|${REPO_DIR}/scripts/statusline.sh"
 )
-for f in "${REPO_DIR}"/hooks/*.sh "${REPO_DIR}"/hooks/lib/* \
+for f in "${REPO_DIR}"/hooks/*.sh "${REPO_DIR}"/hooks/*.py "${REPO_DIR}"/hooks/lib/* \
          "${REPO_DIR}"/commands/*.md "${REPO_DIR}"/agents/*.md; do
     [ -f "$f" ] || continue
     rel="${f#"${REPO_DIR}"/}"
@@ -135,7 +135,7 @@ fi
 
 # Hook executability (through symlinks); derived from the repo's hooks.
 echo "--- executable ---"
-for f in "${REPO_DIR}"/hooks/*.sh; do
+for f in "${REPO_DIR}"/hooks/*.sh "${REPO_DIR}"/hooks/*.py; do
     [ -f "$f" ] || continue
     inst="${CLAUDE_DIR}/hooks/$(basename "$f")"
     if [ -x "$inst" ]; then pass "$inst executable"; else fail "$inst not executable"; fi

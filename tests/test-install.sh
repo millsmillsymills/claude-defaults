@@ -59,7 +59,7 @@ bash "$REPO_DIR/scripts/uninstall.sh" >/dev/null || fail_msg "uninstall.sh exite
 
 # After uninstall: symlinks gone, settings.json restored
 [ -L "$TEST_HOME/.claude/CLAUDE.md" ] && fail_msg "CLAUDE.md still symlinked after uninstall"
-[ -L "$TEST_HOME/.claude/hooks/safety-block.sh" ] && fail_msg "safety-block.sh still symlinked"
+[ -L "$TEST_HOME/.claude/hooks/safety-block.py" ] && fail_msg "safety-block.py still symlinked"
 got=$(jq -r '.hooks // "none"' "$TEST_HOME/.claude/settings.json")
 [ "$got" = "none" ] || [ "$got" = "null" ] || fail_msg "settings.json hooks block not removed by uninstall"
 
@@ -90,8 +90,8 @@ got=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command // ""' "$TEST_HOME2/.claude/s
 [ "$got" -ge 1 ] || fail_msg "P1-2: user custom hook lost in merge (count=$got)"
 
 # Repo's hooks must also be present
-got=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command // ""' "$TEST_HOME2/.claude/settings.json" | grep -c 'safety-block.sh')
-[ "$got" -ge 1 ] || fail_msg "P1-2: repo's safety-block.sh missing after merge (count=$got)"
+got=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command // ""' "$TEST_HOME2/.claude/settings.json" | grep -c 'safety-block.py')
+[ "$got" -ge 1 ] || fail_msg "P1-2: repo's safety-block.py missing after merge (count=$got)"
 
 export HOME="$HOME2_OLD"
 rm -rf "$TEST_HOME2"
@@ -120,7 +120,7 @@ bash "$REPO_DIR/scripts/install.sh" settings >/dev/null || fail_msg "M4: install
 [ -L "$TEST_HOME4/.claude/settings.json" ] && fail_msg "M4: settings.json still a symlink after install"
 got=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command // ""' "$TEST_HOME4/.claude/settings.json" | grep -c 'SYMLINK-CUSTOM-HOOK')
 [ "$got" -ge 1 ] || fail_msg "M4: symlinked user settings discarded (custom hook count=$got)"
-got=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command // ""' "$TEST_HOME4/.claude/settings.json" | grep -c 'safety-block.sh')
+got=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command // ""' "$TEST_HOME4/.claude/settings.json" | grep -c 'safety-block.py')
 [ "$got" -ge 1 ] || fail_msg "M4: template hooks missing after symlink merge (count=$got)"
 export HOME="$HOME2_OLD"
 rm -rf "$TEST_HOME4"
@@ -224,7 +224,7 @@ export HOME="$TEST_HOME9"
 mkdir -p "$TEST_HOME9/.claude"
 bash "$REPO_DIR/scripts/install.sh" >/dev/null || fail_msg "#42: fresh install failed"
 bash "$REPO_DIR/scripts/validate.sh" >/dev/null || fail_msg "#42: validate.sh non-zero on fresh install"
-rm -f "$TEST_HOME9/.claude/hooks/safety-block.sh"
+rm -f "$TEST_HOME9/.claude/hooks/safety-block.py"
 bash "$REPO_DIR/scripts/validate.sh" >/dev/null && fail_msg "#42: validate.sh exited 0 on tampered install"
 export HOME="$HOME2_OLD"
 rm -rf "$TEST_HOME9"

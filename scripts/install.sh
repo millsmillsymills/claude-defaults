@@ -164,7 +164,7 @@ install_settings() {
     # Stop hook. Match any repo hook-script basename under any event.
     if [ "$FORCE" != "1" ] && [ -f "$target" ] && command -v jq >/dev/null 2>&1; then
         local hook_re=""
-        for h in "${REPO_DIR}"/hooks/*.sh; do
+        for h in "${REPO_DIR}"/hooks/*.sh "${REPO_DIR}"/hooks/*.py; do
             [ -f "$h" ] || continue
             local b; b=$(basename "$h")
             hook_re="${hook_re:+${hook_re}|}${b//./\\.}"
@@ -308,9 +308,9 @@ install_commands() {
 install_hooks() {
     log "--- hooks ---"
     mkdir -p "${CLAUDE_DIR}/hooks/lib"
-    chmod +x "${REPO_DIR}"/hooks/*.sh 2>/dev/null || true
+    chmod +x "${REPO_DIR}"/hooks/*.sh "${REPO_DIR}"/hooks/*.py 2>/dev/null || true
     chmod +x "${REPO_DIR}"/hooks/lib/*.py 2>/dev/null || true
-    for hook in "${REPO_DIR}"/hooks/*.sh; do
+    for hook in "${REPO_DIR}"/hooks/*.sh "${REPO_DIR}"/hooks/*.py; do
         [ -f "$hook" ] || continue
         local name; name=$(basename "$hook")
         install_symlink "$hook" "${CLAUDE_DIR}/hooks/${name}" "hook: ${name}"
