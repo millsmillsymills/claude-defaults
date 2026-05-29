@@ -171,24 +171,6 @@ These are patterns to adapt, not drop-in configs. Only the two blocking hooks in
 
 **Blocking patterns** (PreToolUse, in settings.json): The two hooks in this repo's `settings.json` block `rm -rf` (suggests trash instead) and direct push to main/master (requires feature branches). Both read the Bash command from stdin via jq, match with regex, and exit 2 with an error message that tells Claude what to do instead. See `hooks/block-rm-rf.sh` and `hooks/block-push-main.sh`.
 
-**Bash command log** (PostToolUse): Appends every Bash command the agent runs to a log file with a timestamp. Useful for post-session review of what the agent actually did. See `hooks/log-bash-commands.sh`.
-
-```json
-{
-  "PostToolUse": [
-    {
-      "matcher": "Bash",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "jq -r '\"[\" + (now | todate) + \"] \" + .tool_input.command' >> ~/.claude/bash-commands.log"
-        }
-      ]
-    }
-  ]
-}
-```
-
 **Desktop notifications** (Notification): Fires a native OS notification when Claude needs your attention, so you can switch to other work during long autonomous runs instead of watching the terminal.
 
 ```json
@@ -360,7 +342,6 @@ claude-defaults/
 │   ├── block-rm-rf.sh              # legacy: block rm -rf (active)
 │   ├── block-push-main.sh          # legacy: block push to main (active)
 │   ├── enforce-package-manager.sh  # opt-in: enforce pnpm/yarn
-│   ├── log-bash-commands.sh        # opt-in: plain audit log (superseded by log-tool-calls.sh)
 │   ├── safety-block.sh             # NEW: extended destructive-pattern blocks (active)
 │   ├── safety-warn.sh              # NEW: warn on sensitive Edit/Write (active)
 │   ├── log-tool-calls.sh           # NEW: rich JSONL log of every tool call (active)
@@ -369,8 +350,7 @@ claude-defaults/
 │       ├── _log_core.py            # shared patterns + truncation + atomic append
 │       ├── redact.py               # secret-pattern redaction CLI (uses _log_core)
 │       ├── jsonl_write.py          # atomic JSONL append + truncation CLI
-│       ├── log_tool_call.py        # consolidated pre/post logger (uses _log_core)
-│       └── common.sh               # shared bash helpers
+│       └── log_tool_call.py        # consolidated pre/post logger (uses _log_core)
 ├── commands/
 │   ├── review-pr.md                # /review-pr <number>
 │   ├── fix-issue.md                # /fix-issue <number>

@@ -1,0 +1,11 @@
+{
+  "reviewer": "kieran-python",
+  "run_id": "20260426-141420-9db4ced2",
+  "findings": [
+    {"id": "KP-1", "severity": "P2", "confidence": 0.85, "title": "truncate_output cannot guarantee max_bytes contract when all trimmable fields are at or below the 256-byte floor", "file": "hooks/lib/_log_core.py", "lines": "150-163", "related": ["#9", "COR-02"]},
+    {"id": "KP-2", "severity": "P3", "confidence": 0.82, "title": "import errno is dead code in log_tool_call.py", "file": "hooks/lib/log_tool_call.py", "line": 22},
+    {"id": "KP-3", "severity": "P2", "confidence": 0.72, "title": "mtime-based pairing fallback actively aliases call_id across concurrent tool calls in the same session", "file": "hooks/lib/log_tool_call.py", "lines": "160-180", "related": ["#11", "ADV-1"]},
+    {"id": "KP-4", "severity": "P3", "confidence": 0.68, "title": "redact.py omits trailing newline from stdout output", "file": "hooks/lib/redact.py", "line": 41},
+    {"id": "KP-5", "severity": "P3", "confidence": 0.64, "title": "_log_core.ENOSPC re-export has no active importer", "file": "hooks/lib/_log_core.py", "lines": [184, 185]}
+  ]
+}

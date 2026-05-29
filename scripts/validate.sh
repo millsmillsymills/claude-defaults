@@ -36,37 +36,41 @@ elif [ -f "${CLAUDE_DIR}/settings.json" ]; then
     else
         fail "settings.json is invalid JSON"
     fi
-    # Hooks block present
-    for hook_name in safety-block.sh safety-warn.sh log-tool-calls.sh log-rotate.sh; do
-        if jq -r '.. | objects | .command? // empty' "${CLAUDE_DIR}/settings.json" 2>/dev/null | grep -q "$hook_name"; then
-            pass "settings.json wires $hook_name"
+    # Hooks wired: pull commands only from the canonical hook events and require
+    # each to appear as a hooks/<name>.sh path -- not merely as a substring
+    # anywhere in the file (the old `.. | objects | .command` walk would pass
+    # on a stray reference in any unrelated section).
+    wired=$(jq -r '
+        (.hooks.PreToolUse // [])[]?.hooks[]?.command,
+        (.hooks.PostToolUse // [])[]?.hooks[]?.command,
+        (.hooks.SessionEnd // [])[]?.hooks[]?.command
+        | select(. != null)
+    ' "${CLAUDE_DIR}/settings.json" 2>/dev/null)
+    for hook_name in safety-block safety-warn log-tool-calls log-rotate; do
+        if echo "$wired" | grep -qE "hooks/${hook_name}\.sh($|[[:space:]])"; then
+            pass "settings.json wires ${hook_name}.sh"
         else
-            fail "settings.json does NOT wire $hook_name"
+            fail "settings.json does NOT wire ${hook_name}.sh under a hook event"
         fi
     done
 else
     fail "${CLAUDE_DIR}/settings.json missing"
 fi
 
-# Symlinked content
+# Symlinked content. Derive expectations from the repo (mirroring install.sh's
+# globs) so a new/renamed/removed file is caught automatically instead of
+# drifting from a hardcoded list.
 echo "--- symlinks ---"
 declare -a EXPECTED_SYMLINKS=(
     "${CLAUDE_DIR}/CLAUDE.md|${REPO_DIR}/claude-md-template.md"
     "${CLAUDE_DIR}/statusline.sh|${REPO_DIR}/scripts/statusline.sh"
-    "${CLAUDE_DIR}/hooks/safety-block.sh|${REPO_DIR}/hooks/safety-block.sh"
-    "${CLAUDE_DIR}/hooks/safety-warn.sh|${REPO_DIR}/hooks/safety-warn.sh"
-    "${CLAUDE_DIR}/hooks/log-tool-calls.sh|${REPO_DIR}/hooks/log-tool-calls.sh"
-    "${CLAUDE_DIR}/hooks/log-rotate.sh|${REPO_DIR}/hooks/log-rotate.sh"
-    "${CLAUDE_DIR}/hooks/block-rm-rf.sh|${REPO_DIR}/hooks/block-rm-rf.sh"
-    "${CLAUDE_DIR}/hooks/block-push-main.sh|${REPO_DIR}/hooks/block-push-main.sh"
-    "${CLAUDE_DIR}/hooks/lib/redact.py|${REPO_DIR}/hooks/lib/redact.py"
-    "${CLAUDE_DIR}/hooks/lib/jsonl_write.py|${REPO_DIR}/hooks/lib/jsonl_write.py"
-    "${CLAUDE_DIR}/hooks/lib/_log_core.py|${REPO_DIR}/hooks/lib/_log_core.py"
-    "${CLAUDE_DIR}/hooks/lib/common.sh|${REPO_DIR}/hooks/lib/common.sh"
-    "${CLAUDE_DIR}/commands/review-pr.md|${REPO_DIR}/commands/review-pr.md"
-    "${CLAUDE_DIR}/commands/fix-issue.md|${REPO_DIR}/commands/fix-issue.md"
-    "${CLAUDE_DIR}/commands/merge-dependabot.md|${REPO_DIR}/commands/merge-dependabot.md"
 )
+for f in "${REPO_DIR}"/hooks/*.sh "${REPO_DIR}"/hooks/lib/* \
+         "${REPO_DIR}"/commands/*.md "${REPO_DIR}"/agents/*.md; do
+    [ -f "$f" ] || continue
+    rel="${f#"${REPO_DIR}"/}"
+    EXPECTED_SYMLINKS+=("${CLAUDE_DIR}/${rel}|${f}")
+done
 for entry in "${EXPECTED_SYMLINKS[@]}"; do
     path="${entry%|*}"
     expected="${entry#*|}"
@@ -79,6 +83,22 @@ for entry in "${EXPECTED_SYMLINKS[@]}"; do
         fi
     else
         fail "$path is not a symlink"
+    fi
+done
+# Skills: install symlinks each repo skill dir unless a real dir pre-exists,
+# so a real dir is acceptable (preserved), a correct symlink is ideal, and
+# missing is a failure.
+for d in "${REPO_DIR}"/skills/*/; do
+    [ -d "$d" ] || continue
+    name=$(basename "$d")
+    dst="${CLAUDE_DIR}/skills/${name}"
+    if [ -L "$dst" ]; then
+        actual=$(readlink "$dst")
+        if [ "$actual" = "${d%/}" ]; then pass "skill $name -> ${d%/}"; else fail "skill $name -> $actual (expected ${d%/})"; fi
+    elif [ -d "$dst" ]; then
+        warn "skill $name is a real dir (pre-existing; install preserves it)"
+    else
+        fail "skill $name not installed"
     fi
 done
 
@@ -108,13 +128,14 @@ else
     fail "${CLAUDE_DIR}/logs missing"
 fi
 
-# Hook executability (through symlinks)
+# Hook executability (through symlinks); derived from the repo's hooks.
 echo "--- executable ---"
-for hook in safety-block safety-warn log-tool-calls log-rotate block-rm-rf block-push-main; do
-    f="${CLAUDE_DIR}/hooks/${hook}.sh"
-    if [ -x "$f" ]; then pass "$f executable"; else fail "$f not executable"; fi
+for f in "${REPO_DIR}"/hooks/*.sh; do
+    [ -f "$f" ] || continue
+    inst="${CLAUDE_DIR}/hooks/$(basename "$f")"
+    if [ -x "$inst" ]; then pass "$inst executable"; else fail "$inst not executable"; fi
 done
-[ -x "${CLAUDE_DIR}/statusline.sh" ] && pass "statusline.sh executable" || fail "statusline.sh not executable"
+if [ -x "${CLAUDE_DIR}/statusline.sh" ]; then pass "statusline.sh executable"; else fail "statusline.sh not executable"; fi
 
 # MCP config
 echo "--- mcp ---"
