@@ -49,6 +49,36 @@ assert o["output"]["stdout"] == "hi", o
 ' "$tmp" || fail_msg "case3: small payload was modified"
 rm -f "$tmp"
 
+# Case 4: the non-trimmable envelope (here a large args) alone exceeds the cap.
+# Emptying stdout/stderr cannot save it, so the line is emitted oversize but
+# honestly flagged with _truncated_oversize -- _truncated_bytes must never
+# imply a cap that wasn't met.
+tmp=$(mktemp)
+bigargs=$(python3 -c 'print("a" * 2000, end="")')
+payload=$(jq -nc --arg a "$bigargs" \
+    '{call_id:"c4", ts:"2026-05-29T00:00:00Z", args:{cmd:$a}, output:{stdout:"oo", stderr:"ee"}}')
+echo "$payload" | CLAUDE_LOG_MAX_LINE_BYTES=300 python3 hooks/lib/jsonl_write.py "$tmp"
+python3 -c '
+import json, sys
+o = json.loads(open(sys.argv[1]).read())
+assert o["output"].get("_truncated_oversize") is True, o
+' "$tmp" || fail_msg "case4: envelope-over-cap not flagged _truncated_oversize"
+python3 -c 'import json,sys; json.loads(open(sys.argv[1]).read())' "$tmp" \
+    || fail_msg "case4: oversize line is not valid JSON"
+rm -f "$tmp"
+
+# Case 5: truncating in the middle of a multibyte char must still yield valid
+# UTF-8 JSON (decode errors='replace'), not a broken line.
+tmp=$(mktemp)
+euros=$(python3 -c 'print("€" * 1000, end="")')
+payload=$(jq -nc --arg o "$euros" '{call_id:"c5", output:{stdout:$o, stderr:""}}')
+echo "$payload" | CLAUDE_LOG_MAX_LINE_BYTES=512 python3 hooks/lib/jsonl_write.py "$tmp"
+n=$(line_bytes "$tmp")
+[ "$n" -le 600 ] || fail_msg "case5: line $n bytes exceeds 512 cap (+leeway)"
+python3 -c 'import json,sys; json.loads(open(sys.argv[1]).read())' "$tmp" \
+    || fail_msg "case5: multibyte-boundary truncation produced invalid JSON"
+rm -f "$tmp"
+
 if [ "$fail" -eq 0 ]; then
     echo "test-truncate: PASS"
 else

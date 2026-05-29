@@ -229,6 +229,32 @@ bash "$REPO_DIR/scripts/validate.sh" >/dev/null && fail_msg "#42: validate.sh ex
 export HOME="$HOME2_OLD"
 rm -rf "$TEST_HOME9"
 
+# #55: a partial restore failure must surface as a non-zero exit, not a
+# stderr-only warning automation can't detect. Inject a failure by replacing an
+# installed symlink with an unwritable regular file at a path uninstall must
+# restore from backup; the restoring cp then fails.
+if [ "$(id -u)" -ne 0 ]; then
+    TEST_HOME10=$(mktemp -d -t claude-defaults-restorefail.XXXXXX)
+    export HOME="$TEST_HOME10"
+    mkdir -p "$TEST_HOME10/.claude"
+    # Pre-existing real file so install backs it up before symlinking.
+    echo "original statusline" > "$TEST_HOME10/.claude/statusline.sh"
+    bash "$REPO_DIR/scripts/install.sh" >/dev/null || fail_msg "#55: install failed"
+    # Swap the installed symlink for an unwritable file; uninstall's symlink
+    # sweep skips non-symlinks, so the restore step hits it and cp fails.
+    rm -f "$TEST_HOME10/.claude/statusline.sh"
+    echo "blocker" > "$TEST_HOME10/.claude/statusline.sh"
+    chmod 000 "$TEST_HOME10/.claude/statusline.sh"
+    if bash "$REPO_DIR/scripts/uninstall.sh" >/dev/null 2>&1; then
+        fail_msg "#55: uninstall exited 0 despite a failed restore"
+    fi
+    chmod 644 "$TEST_HOME10/.claude/statusline.sh" 2>/dev/null || true
+    export HOME="$HOME2_OLD"
+    rm -rf "$TEST_HOME10"
+else
+    echo "  SKIP #55 restore-failure test (running as root; mode 000 is bypassed)"
+fi
+
 if [ "$fail" -eq 0 ]; then
     echo "test-install: PASS"
 else
