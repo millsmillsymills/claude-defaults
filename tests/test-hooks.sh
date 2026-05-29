@@ -194,13 +194,63 @@ last=$(jq -c 'select(.event=="post" and .session_id=="nz")' "$utc_log" | tail -n
 echo "$last" | jq -e '.exit_status == 1' >/dev/null \
     || fail_msg "H9: non-zero exit_status not recorded: $last"
 
-# === L8: post with no preceding pre (fresh call_id, duration_ms 0) ===
+# === L8: post with no preceding pre (fresh call_id, duration_ms null) ===
 echo "  testing post-without-pre fallback"
 np_post='{"session_id":"nopre-unique-xyz","cwd":"/tmp","tool_name":"Bash","tool_input":{"command":"echo lonely"},"tool_response":{"stdout":"lonely\n","exit_code":0}}'
 echo "$np_post" | bash hooks/log-tool-calls.sh post
 last=$(jq -c 'select(.event=="post" and .session_id=="nopre-unique-xyz")' "$utc_log" | tail -n 1)
-echo "$last" | jq -e '(.call_id | type == "string" and length > 0) and .duration_ms == 0' >/dev/null \
+echo "$last" | jq -e '(.call_id | type == "string" and length > 0) and .duration_ms == null' >/dev/null \
     || fail_msg "L8: post-without-pre row malformed: $last"
+
+# === concurrent identical-input calls: no fabricated duration, no aliasing ===
+# Two pre-events with identical session+input share one pair_path, so the
+# second pre's O_TRUNC overwrites the first's call_id/start. The join is only
+# ever derived from the legitimately-written pair file: every post duration is
+# either a plausible value read from that file or null (pair file gone). With
+# the mtime fallback removed, no post can consume a racing call's file, so no
+# duration is fabricated from foreign state. Race timing decides how many posts
+# observe the file before it is unlinked, so the count of nulls is not asserted.
+echo "  testing concurrent identical-input pairing"
+conc_pre='{"session_id":"conc-test","cwd":"/tmp","tool_name":"Bash","tool_input":{"command":"echo race"}}'
+conc_post='{"session_id":"conc-test","cwd":"/tmp","tool_name":"Bash","tool_input":{"command":"echo race"},"tool_response":{"stdout":"race\n","exit_code":0}}'
+echo "$conc_pre" | bash hooks/log-tool-calls.sh pre &
+echo "$conc_pre" | bash hooks/log-tool-calls.sh pre &
+wait
+sleep 0.03
+echo "$conc_post" | bash hooks/log-tool-calls.sh post &
+echo "$conc_post" | bash hooks/log-tool-calls.sh post &
+wait
+conc_durations=$(jq -c 'select(.event=="post" and .session_id=="conc-test") | .duration_ms' "$utc_log")
+conc_post_count=$(printf '%s\n' "$conc_durations" | grep -c .)
+[ "$conc_post_count" = "2" ] || fail_msg "concurrent: expected 2 post rows, got $conc_post_count"
+# Every duration is either null (honest unknown) or a plausible non-negative
+# integer no larger than the time we actually waited (~2s ceiling). Anything
+# else would mean a value was invented or pulled from another call.
+while IFS= read -r d; do
+    case "$d" in
+        null) ;;
+        ''|*[!0-9]*) fail_msg "concurrent: implausible duration_ms '$d'" ;;
+        *) [ "$d" -le 2000 ] || fail_msg "concurrent: duration_ms too large '$d'" ;;
+    esac
+done <<< "$conc_durations"
+# No leftover pair files for this session after both posts.
+conc_leftover=$(ls "${TMPDIR:-/tmp}"/claude-tool-conc-test-* 2>/dev/null | wc -l | tr -d ' ')
+[ "$conc_leftover" = "0" ] || fail_msg "concurrent: pair files leaked (count=$conc_leftover)"
+
+# === post with no pre never aliases a concurrent same-session call (KP-3) ===
+# A different-input call's pair file exists; a post whose own pre never ran
+# must NOT consume it. The mtime fallback used to; now it reports null.
+echo "  testing no-pre post does not alias a sibling pair file"
+echo '{"session_id":"alias-test","cwd":"/tmp","tool_name":"Bash","tool_input":{"command":"echo sibling"}}' \
+    | bash hooks/log-tool-calls.sh pre
+alias_post='{"session_id":"alias-test","cwd":"/tmp","tool_name":"Bash","tool_input":{"command":"echo orphan"},"tool_response":{"stdout":"orphan\n","exit_code":0}}'
+echo "$alias_post" | bash hooks/log-tool-calls.sh post
+alias_dur=$(jq -c 'select(.event=="post" and .session_id=="alias-test") | .duration_ms' "$utc_log" | tail -n 1)
+[ "$alias_dur" = "null" ] || fail_msg "alias: orphan post should be null, got '$alias_dur'"
+# The sibling's pair file must remain untouched (only its own post may clear it).
+alias_leftover=$(ls "${TMPDIR:-/tmp}"/claude-tool-alias-test-* 2>/dev/null | wc -l | tr -d ' ')
+[ "$alias_leftover" = "1" ] || fail_msg "alias: sibling pair file disturbed (count=$alias_leftover)"
+rm -f "${TMPDIR:-/tmp}"/claude-tool-alias-test-*
 
 # === M13: oversized output is truncated under the line-byte cap ===
 echo "  testing output truncation"

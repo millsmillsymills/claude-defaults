@@ -51,7 +51,7 @@ One JSON object per line. Two row types: `pre` (written before the tool runs) an
 | `mcp_server` | string \| null | parsed from `mcp__<server>__<method>` tool names |
 | `args` | object | full `tool_input`, redacted |
 | `exit_status` | int | post only |
-| `duration_ms` | int | post only; pre/post call_id match |
+| `duration_ms` | int \| null | post only; `null` when the pre pair file was absent (e.g. concurrent calls) -- duration is unknown, not zero |
 | `output` | object | post only; full `tool_response`, redacted, capped at 1 MB |
 | `output._truncated_bytes` | int | present on post rows where output exceeded the cap |
 
