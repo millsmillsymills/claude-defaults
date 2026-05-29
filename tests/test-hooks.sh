@@ -236,22 +236,22 @@ CLAUDE_LOG_ROTATE_BYTES=1 bash hooks/log-rotate.sh
 [ -f "${rot_log}.2.gz" ] || fail_msg "M12: collision did not bump to .2.gz"
 
 # === Gzip rotation produces a valid, faithful archive ===
-echo "  testing log-rotate.sh gzip integrity (issue #7)"
+echo "  testing log-rotate.sh gzip integrity"
 gz_log="$TEST_HOME/.claude/logs/tool-calls-$(date -u +%Y-%m-%d).jsonl"
 rm -f "${gz_log}".*.gz
 gz_payload=$(python3 -c 'print("line-" + "x" * 4096)')
 printf '%s\n' "$gz_payload" > "$gz_log"
 CLAUDE_LOG_ROTATE_BYTES=1 bash hooks/log-rotate.sh
-[ -f "$gz_log" ] && fail_msg "issue #7: original log not removed after gzip rotation"
+[ -f "$gz_log" ] && fail_msg "original log not removed after gzip rotation"
 gz_out="${gz_log}.1.gz"
-[ -f "$gz_out" ] || fail_msg "issue #7: rotation did not create .1.gz"
-gzip -t "$gz_out" 2>/dev/null || fail_msg "issue #7: rotated .gz failed integrity check"
-[ -e "${gz_log}.1.gz.tmp" ] && fail_msg "issue #7: tmp file left behind after rotation"
+[ -f "$gz_out" ] || fail_msg "rotation did not create .1.gz"
+gzip -t "$gz_out" 2>/dev/null || fail_msg "rotated .gz failed integrity check"
+[ -e "${gz_log}.1.gz.tmp" ] && fail_msg "tmp file left behind after rotation"
 decompressed=$(gzip -dc "$gz_out" 2>/dev/null)
-[ "$decompressed" = "$gz_payload" ] || fail_msg "issue #7: decompressed content does not match original"
+[ "$decompressed" = "$gz_payload" ] || fail_msg "decompressed content does not match original"
 
 # === Rename-first rotation detaches the archive from the live path ===
-echo "  testing log-rotate.sh concurrent-append safety (issue #53)"
+echo "  testing log-rotate.sh concurrent-append safety"
 cc_log="$TEST_HOME/.claude/logs/tool-calls-$(date -u +%Y-%m-%d).jsonl"
 rm -f "${cc_log}".*.gz "${cc_log}".*.rotating "$cc_log"
 printf 'old-1\nold-2\n' > "$cc_log"
@@ -259,18 +259,18 @@ CLAUDE_LOG_ROTATE_BYTES=1 bash hooks/log-rotate.sh
 # A tool call appending right after rotation must land in a fresh today_log,
 # never in the file just archived-and-deleted.
 printf 'new-after-rotate\n' >> "$cc_log"
-grep -q 'new-after-rotate' "$cc_log" || fail_msg "issue #53: post-rotation line not in fresh log"
+grep -q 'new-after-rotate' "$cc_log" || fail_msg "post-rotation line not in fresh log"
 cc_gz=""
 for f in "${cc_log}".*.gz; do
     [ -e "$f" ] && cc_gz="$f" && break
 done
-[ -n "$cc_gz" ] || fail_msg "issue #53: rotation did not produce a .gz"
+[ -n "$cc_gz" ] || fail_msg "rotation did not produce a .gz"
 cc_arch=$(gzip -dc "$cc_gz" 2>/dev/null)
-[ "$cc_arch" = "$(printf 'old-1\nold-2')" ] || fail_msg "issue #53: archive content unexpected"
-[ -e "${cc_log}.1.rotating" ] && fail_msg "issue #53: .rotating left behind on success"
+[ "$cc_arch" = "$(printf 'old-1\nold-2')" ] || fail_msg "archive content unexpected"
+[ -e "${cc_log}.1.rotating" ] && fail_msg ".rotating left behind on success"
 
 # === A corrupt archive preserves the data instead of destroying it ===
-echo "  testing log-rotate.sh data preservation on bad archive (issue #53)"
+echo "  testing log-rotate.sh data preservation on bad archive"
 fl_log="$TEST_HOME/.claude/logs/tool-calls-$(date -u +%Y-%m-%d).jsonl"
 rm -f "${fl_log}".*.gz "${fl_log}".*.rotating "$fl_log"
 printf 'keep-me\n' > "$fl_log"
@@ -289,13 +289,13 @@ rm -rf "$fake_bin"
 survived=""
 [ -f "$fl_log" ] && survived=$(cat "$fl_log")
 [ -z "$survived" ] && [ -f "${fl_log}.1.rotating" ] && survived=$(cat "${fl_log}.1.rotating")
-grep -q 'keep-me' <<< "$survived" || fail_msg "issue #53: data lost when archive was corrupt"
-[ -e "${fl_log}.1.gz" ] && fail_msg "issue #53: kept a corrupt .gz"
-[ -e "${fl_log}.1.gz.tmp" ] && fail_msg "issue #53: tmp left after failed rotation"
+grep -q 'keep-me' <<< "$survived" || fail_msg "data lost when archive was corrupt"
+[ -e "${fl_log}.1.gz" ] && fail_msg "kept a corrupt .gz"
+[ -e "${fl_log}.1.gz.tmp" ] && fail_msg "tmp left after failed rotation"
 rm -f "${fl_log}".*.rotating "$fl_log"
 
 # === Mid-session rotation fires via the pre path ===
-echo "  testing mid-session rotation via pre path (issue #12)"
+echo "  testing mid-session rotation via pre path"
 ms_log="$TEST_HOME/.claude/logs/tool-calls-$(date -u +%Y-%m-%d).jsonl"
 rm -f "${ms_log}".*.gz
 python3 -c 'open("'"$ms_log"'", "w").write("seed-row\n" * 200)'
@@ -305,7 +305,7 @@ echo 99 > "$TEST_HOME/.claude/logs/.rotate-counter"
 ms_input='{"session_id":"ms-rotate","cwd":"/tmp","tool_name":"Bash","tool_input":{"command":"echo midsession"}}'
 echo "$ms_input" | CLAUDE_LOG_ROTATE_BYTES=64 bash hooks/log-tool-calls.sh pre
 ms_gz_count=$(ls "${ms_log}".*.gz 2>/dev/null | wc -l | tr -d ' ')
-[ "$ms_gz_count" -ge 1 ] || fail_msg "issue #12: mid-session pre call did not rotate oversize log"
+[ "$ms_gz_count" -ge 1 ] || fail_msg "mid-session pre call did not rotate oversize log"
 
 # === existing block-rm-rf.sh / block-push-main.sh (regression) ===
 echo "  testing legacy block hooks"
