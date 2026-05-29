@@ -20,5 +20,17 @@ done
 # 3. mcp-template.json is valid JSON
 python3 -m json.tool < mcp-template.json >/dev/null 2>&1 || { echo "FAIL: mcp-template.json not valid JSON" >&2; exit 1; }
 
+# 4. permissions.deny blocks Edit/Write on every shell init file a login shell sources
+deny=$(jq -r '.permissions.deny[]' settings.json)
+for f in .bashrc .bash_profile .bash_login .profile .zshrc .zprofile .zshenv; do
+    for action in Edit Write; do
+        entry="$action(~/$f)"
+        if ! grep -qxF "$entry" <<<"$deny"; then
+            echo "FAIL: settings.json permissions.deny missing $entry" >&2
+            fail=$((fail+1))
+        fi
+    done
+done
+
 [ "$fail" = "0" ] || exit 1
 echo "test-settings-valid: PASS"
