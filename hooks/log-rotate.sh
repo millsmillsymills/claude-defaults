@@ -17,7 +17,9 @@ LOG_DIR="${HOME}/.claude/logs"
 ROTATE_BYTES="${CLAUDE_LOG_ROTATE_BYTES:-104857600}"   # 100 MB
 RETAIN_DAYS="${CLAUDE_LOG_RETAIN_DAYS:-365}"
 
-today_log="${LOG_DIR}/tool-calls-$(date +%Y-%m-%d).jsonl"
+# UTC to match the writer (log_tool_call.py names files by UTC date); a local
+# date would target the wrong file near midnight on non-UTC machines.
+today_log="${LOG_DIR}/tool-calls-$(date -u +%Y-%m-%d).jsonl"
 
 # Rotate today's log if too big.
 if [ -f "$today_log" ]; then

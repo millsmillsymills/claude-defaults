@@ -2,7 +2,7 @@
 # Run all claude-defaults test scripts. Exit non-zero on any failure.
 set -uo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 TESTS=(
     tests/test-settings-valid.sh
     tests/test-redaction.sh
@@ -13,12 +13,15 @@ TESTS=(
 
 fail=0
 for t in "${TESTS[@]}"; do
-    if [ ! -x "$t" ]; then
-        echo "SKIP: $t (not executable or missing)"
-        continue
-    fi
     echo ""
     echo "=== $t ==="
+    # A missing/unrunnable test is a hard failure, not a silent skip -- a
+    # dropped +x bit must not let the suite report all-green with 0 tests run.
+    if [ ! -f "$t" ]; then
+        echo "FAIL: $t (missing)"
+        fail=$((fail + 1))
+        continue
+    fi
     if bash "$t"; then
         echo "PASS: $t"
     else
