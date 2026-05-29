@@ -11,11 +11,12 @@ set -euo pipefail
 
 CMD=$(jq -r '.tool_input.command')
 
-# Match npm at a command boundary: line start, after &&/||/;/|, or after env-var
-# assignments (NODE_ENV=prod npm install). Anchoring only to `^` missed those and
-# leading whitespace; matching bare whitespace would false-positive on `npm` in
-# prose (echo, commit messages), so we require a real boundary.
-NPM_RE='(^|&&|\|\||;|\|)[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+)*npm[[:space:]]+(install|i|add|remove|uninstall|ci|run|exec)'
+# Match npm at a command boundary: line start, after &&/||/;/|, after a
+# subshell/group opener ( or {, or after env-var assignments (NODE_ENV=prod npm
+# install). Anchoring only to `^` missed those and leading whitespace; matching
+# bare whitespace would false-positive on `npm` in prose (echo, commit
+# messages), so we require a real boundary.
+NPM_RE='(^|&&|\|\||;|\||\(|\{)[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[[:space:]]+)*npm[[:space:]]+(install|i|add|remove|uninstall|ci|run|exec)'
 
 # Detect if project uses pnpm (pnpm-lock.yaml in working directory)
 if [ -f "pnpm-lock.yaml" ]; then
