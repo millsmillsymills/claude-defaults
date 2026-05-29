@@ -91,6 +91,18 @@ out=$(echo "$nested" | python3 hooks/lib/redact.py)
 echo "$out" | jq -e '.a.b[0] | test("\\*\\*\\*")' >/dev/null \
     || fail_msg "nested redaction failed: $out"
 
+# H11: redact-existing-logs.py re-redacts a captured log in place.
+tmplog=$(mktemp)
+printf '%s\n' '{"args":{"command":"export GH=ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}' > "$tmplog"
+printf '%s\n' 'this line is not json' >> "$tmplog"
+python3 scripts/redact-existing-logs.py "$tmplog" >/dev/null
+if grep -qF 'ghp_aaaa' "$tmplog"; then
+    fail_msg "H11: secret not redacted in log file"
+fi
+grep -qF '***GH_TOKEN***' "$tmplog" || fail_msg "H11: redaction marker missing in log file"
+grep -qF 'this line is not json' "$tmplog" || fail_msg "H11: non-JSON line not preserved"
+rm -f "$tmplog"
+
 # H4: PEM private key blocks (multiline; needs DOTALL pattern)
 pem=$(printf -- '-----BEGIN RSA PRIVATE KEY-----\nMIIEsecretbodyABC\n-----END RSA PRIVATE KEY-----')
 pem_out=$(jq -nc --arg v "$pem" '{value:$v}' | python3 hooks/lib/redact.py | jq -r '.value')

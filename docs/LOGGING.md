@@ -57,17 +57,22 @@ One JSON object per line. Two row types: `pre` (written before the tool runs) an
 
 ## Redaction
 
-Patterns auto-stripped before write (see `hooks/lib/redact.py`):
+Patterns auto-stripped before write (source of truth: `hooks/lib/_log_core.py` `_PATTERNS`):
 
 | Pattern | Replacement |
 |---|---|
 | JWT tokens | `***JWT***` |
 | AWS access keys (`AKIA...`) | `***AWS_KEY***` |
+| AWS STS keys (`ASIA...`) | `***AWS_STS_KEY***` |
 | GitHub tokens (`ghp_/gho_/ghs_/ghu_`) | `***GH_TOKEN***` |
+| GitHub fine-grained PATs (`github_pat_...`) | `***GH_PAT***` |
 | Anthropic keys (`sk-ant-...`) | `***ANTHROPIC_KEY***` |
-| OpenAI keys (`sk-...` 40-80 chars) | `***OPENAI_KEY***` |
+| OpenAI keys (`sk-...`) | `***OPENAI_KEY***` |
+| URL userinfo passwords (`user:pass@host`) | `user:***@host` |
 | `password=`, `token=`, `secret=`, `api_key=`, `bearer:`, `authorization:` | value `***` |
 | `--password=`, `--token=`, `--secret=`, `--api-key=` | value `***` |
+
+This table is a summary; `_log_core.py` is the full, authoritative set.
 
 If you need to add a pattern, edit `hooks/lib/_log_core.py`'s `_PATTERNS` list — it's the single source of truth, imported by all three callers (`redact.py` CLI, `jsonl_write.py` CLI, and the live `log_tool_call.py` logging pipeline). Add a case to `tests/test-redaction.sh`. To re-redact older logs after adding a pattern, run `python3 scripts/redact-existing-logs.py <log-file>` (one-off; not auto-installed).
 
