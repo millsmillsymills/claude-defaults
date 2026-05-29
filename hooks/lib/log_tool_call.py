@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -84,6 +85,68 @@ def _max_line_bytes() -> int:
         return DEFAULT_MAX_LINE
 
 
+# Default 100 MB, matching CLAUDE_LOG_ROTATE_BYTES in log-rotate.sh.
+_DEFAULT_ROTATE_BYTES = 104857600
+# Only stat + maybe rotate every Nth pre-call so the steady-state path stays
+# cheap; SessionEnd still rotates on exit, this only bounds long agent loops.
+_ROTATE_CHECK_EVERY = 100
+
+
+def _rotate_bytes() -> int:
+    try:
+        return int(os.environ.get("CLAUDE_LOG_ROTATE_BYTES", _DEFAULT_ROTATE_BYTES))
+    except ValueError:
+        return _DEFAULT_ROTATE_BYTES
+
+
+def _bump_counter(log_dir: Path) -> int:
+    """Increment and return a persistent pre-call counter.
+
+    Backed by a small file in the log dir so the modulo gate survives across
+    the one-shot hook invocations (each tool call is a fresh process).
+    """
+    counter_path = log_dir / ".rotate-counter"
+    try:
+        n = int(counter_path.read_text()) + 1
+    except (OSError, ValueError):
+        n = 1
+    try:
+        counter_path.write_text(str(n))
+    except OSError:
+        pass
+    return n
+
+
+def _maybe_rotate(log_dir: Path, log_file: str) -> None:
+    """Mid-session rotation: shell out to log-rotate.sh if today's log is big.
+
+    Gated to run at most once per `_ROTATE_CHECK_EVERY` pre-calls. Never raises:
+    rotation is best-effort and must not break a tool call.
+    """
+    try:
+        if _bump_counter(log_dir) % _ROTATE_CHECK_EVERY != 0:
+            return
+        try:
+            size = os.stat(log_file).st_size
+        except OSError:
+            return
+        if size < _rotate_bytes():
+            return
+        rotate_script = Path(os.path.dirname(os.path.realpath(__file__))).parent / "log-rotate.sh"
+        if not rotate_script.is_file():
+            return
+        subprocess.run(
+            ["bash", str(rotate_script)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=60,
+            check=False,
+        )
+    except Exception:
+        return
+
+
 def main() -> int:
     event = "pre"
     if len(sys.argv) >= 2 and sys.argv[1] in ("pre", "post"):
@@ -113,11 +176,14 @@ def main() -> int:
     # Generate call_id ONCE per invocation. For pre, write it into the pair
     # file alongside the start time so post can read it back and the pre-row's
     # call_id matches its post-row's call_id (the docs/LOGGING.md "join on
-    # call_id" contract). For post, fall back to a fresh call_id only when the
-    # pair file is missing.
+    # call_id" contract). For post, use a fresh call_id and duration_ms=None
+    # when the canonical pair file is absent. Claude Code's hook contract passes
+    # no state pre->post, so there is no correct lookup key when the pair file
+    # is missing -- guessing from other files would fabricate wrong values.
     call_id = _call_id()
 
     if event == "pre":
+        _maybe_rotate(log_dir, log_file)
         try:
             # Issue #15 (polish): pair files are created 0o600 (owner-only).
             # They contain timing + session metadata; no reason for other
@@ -139,8 +205,11 @@ def main() -> int:
             "args": redact_value(tool_input),
         }
     else:
-        # Post: pair by content hash. Fall back to most-recent same-session
-        # file (handles the case where pre-row was missing).
+        # Post: pair on the canonical content-hash file written by pre. When it
+        # is absent (a racing concurrent call, or no preceding pre), emit a
+        # fresh call_id and duration_ms=None. We do not guess from other pair
+        # files: identical-input calls share a pair_path and any mtime-based
+        # match would consume a racing call's file, misattributing both joins.
         start_time = None
         paired_call_id = None
         if os.path.isfile(pair_path):
@@ -156,29 +225,8 @@ def main() -> int:
                 os.unlink(pair_path)
             except OSError:
                 pass
-        else:
-            session_safe = _sanitize(session_id)
-            if session_safe and session_safe != "unknown":
-                try:
-                    candidates = sorted(
-                        Path(_temp_dir()).glob(f"claude-tool-{session_safe}-*"),
-                        key=lambda p: p.stat().st_mtime,
-                        reverse=True,
-                    )
-                    if candidates:
-                        with open(candidates[0]) as f:
-                            parts = f.read().split()
-                            if len(parts) >= 2:
-                                paired_call_id = parts[0]
-                                start_time = float(parts[1])
-                        try:
-                            candidates[0].unlink()
-                        except OSError:
-                            pass
-                except OSError:
-                    pass
 
-        duration_ms = int((time.time() - start_time) * 1000) if start_time else 0
+        duration_ms = int((time.time() - start_time) * 1000) if start_time else None
         tool_response = data.get("tool_response") or {}
         if not isinstance(tool_response, dict):
             tool_response = {"_raw": tool_response}

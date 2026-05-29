@@ -51,7 +51,7 @@ One JSON object per line. Two row types: `pre` (written before the tool runs) an
 | `mcp_server` | string \| null | parsed from `mcp__<server>__<method>` tool names |
 | `args` | object | full `tool_input`, redacted |
 | `exit_status` | int | post only |
-| `duration_ms` | int | post only; pre/post call_id match |
+| `duration_ms` | int \| null | post only; `null` when the pre pair file was absent (e.g. concurrent calls) -- duration is unknown, not zero |
 | `output` | object | post only; full `tool_response`, redacted, capped at 1 MB |
 | `output._truncated_bytes` | int | present on post rows where output exceeded the cap |
 
@@ -74,7 +74,7 @@ Patterns auto-stripped before write (source of truth: `hooks/lib/_log_core.py` `
 
 This table is a summary; `_log_core.py` is the full, authoritative set.
 
-If you need to add a pattern, edit `hooks/lib/_log_core.py`'s `_PATTERNS` list — it's the single source of truth, imported by all three callers (`redact.py` CLI, `jsonl_write.py` CLI, and the live `log_tool_call.py` logging pipeline). Add a case to `tests/test-redaction.sh`. To re-redact older logs after adding a pattern, run `python3 scripts/redact-existing-logs.py <log-file>` (one-off; not auto-installed).
+If you need to add a pattern, edit `hooks/lib/_log_core.py`'s `_PATTERNS` list — it's the single source of truth, imported by all three callers (`redact.py` CLI, `jsonl_write.py` CLI, and the live `log_tool_call.py` logging pipeline). Add a case to `tests/test-redaction.sh`. To re-redact older logs after adding a pattern, run `python3 scripts/redact-existing-logs.py <log-file>` (one-off; not auto-installed). It rewrites each file via `os.replace`, so run it only against rotated/inactive logs or when no Claude session is active — a live logger appending to the old inode would lose those writes.
 
 ## Rotation policy
 

@@ -179,6 +179,56 @@ got=$(jq -r '.mcpServers.useredit.command // ""' "$TEST_HOME8/.mcp.json" 2>/dev/
 export HOME="$HOME2_OLD"
 rm -rf "$TEST_HOME8"
 
+# #17: a --force settings re-run on already-merged settings must not duplicate
+# entries under ANY hook event (not just PreToolUse). Covers the dedup intent.
+TEST_HOME7=$(mktemp -d -t claude-defaults-dedup.XXXXXX)
+export HOME="$TEST_HOME7"
+mkdir -p "$TEST_HOME7/.claude"
+bash "$REPO_DIR/scripts/install.sh" settings >/dev/null || fail_msg "#17: first settings install failed"
+for ev in PreToolUse PostToolUse Stop SessionEnd; do
+    before=$(jq "[.hooks.${ev}[]?.hooks[]?] | length" "$TEST_HOME7/.claude/settings.json")
+    bash "$REPO_DIR/scripts/install.sh" --force settings >/dev/null || fail_msg "#17: --force settings failed ($ev)"
+    after=$(jq "[.hooks.${ev}[]?.hooks[]?] | length" "$TEST_HOME7/.claude/settings.json")
+    [ "$before" = "$after" ] || fail_msg "#17: ${ev} hook count grew $before -> $after on --force re-merge"
+done
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME7"
+
+# #17: a Stop hook wired to a repo script must be recognized by the idempotency
+# guard. Pre-seed settings.json with ONLY a Stop hook pointing at a repo script;
+# a non-force re-install must detect it and skip (so no duplicate Stop hook).
+TEST_HOME8=$(mktemp -d -t claude-defaults-stop.XXXXXX)
+export HOME="$TEST_HOME8"
+mkdir -p "$TEST_HOME8/.claude"
+cat > "$TEST_HOME8/.claude/settings.json" <<'PRE'
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "$HOME/.claude/hooks/log-rotate.sh"}]}
+    ]
+  }
+}
+PRE
+out=$(bash "$REPO_DIR/scripts/install.sh" settings 2>&1) || fail_msg "#17: Stop-guard install failed"
+echo "$out" | grep -q "already merged" || fail_msg "#17: idempotency guard did not recognize Stop-only install"
+stop_count=$(jq '[.hooks.Stop[]?.hooks[]?] | length' "$TEST_HOME8/.claude/settings.json")
+[ "$stop_count" = "1" ] || fail_msg "#17: Stop hook count=$stop_count after guarded re-install (expected 1, no dup)"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME8"
+
+# #42: validate.sh smoke test — fresh install exits 0; a tampered install
+# (removed hook symlink) exits non-zero.
+TEST_HOME9=$(mktemp -d -t claude-defaults-validate.XXXXXX)
+export HOME="$TEST_HOME9"
+mkdir -p "$TEST_HOME9/.claude"
+bash "$REPO_DIR/scripts/install.sh" >/dev/null || fail_msg "#42: fresh install failed"
+bash "$REPO_DIR/scripts/validate.sh" >/dev/null || fail_msg "#42: validate.sh non-zero on fresh install"
+rm -f "$TEST_HOME9/.claude/hooks/safety-block.sh"
+bash "$REPO_DIR/scripts/validate.sh" >/dev/null && fail_msg "#42: validate.sh exited 0 on tampered install"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME9"
+
 if [ "$fail" -eq 0 ]; then
     echo "test-install: PASS"
 else

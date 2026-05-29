@@ -29,7 +29,16 @@ if [ -f "$today_log" ]; then
         while [ -e "${today_log}.${n}.gz" ]; do
             n=$((n + 1))
         done
-        gzip -c "$today_log" > "${today_log}.${n}.gz" && rm "$today_log"
+        # Atomic rotation: gzip to a tmp file and verify the archive is intact
+        # before committing. If gzip exits 0 but wrote a truncated archive
+        # (ENOSPC mid-write, absorbed SIGPIPE), gzip -t catches it and the
+        # original log is preserved instead of being deleted under a broken .gz.
+        tmp_gz="${today_log}.${n}.gz.tmp"
+        if gzip -c "$today_log" > "$tmp_gz" && gzip -t "$tmp_gz" 2>/dev/null; then
+            mv "$tmp_gz" "${today_log}.${n}.gz" && rm "$today_log"
+        else
+            rm -f "$tmp_gz"
+        fi
     fi
 fi
 

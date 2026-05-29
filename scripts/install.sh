@@ -29,6 +29,10 @@ BACKUP_DIR="${CLAUDE_DIR}/backups/pre-claude-defaults-${BACKUP_TS}"
 # captured by the backup snapshot; this manifest covers what that can't.
 MANIFEST="${CLAUDE_DIR}/.claude-defaults-install.manifest"
 
+# shellcheck source=scripts/hook-events.sh
+. "$(dirname "$0")/hook-events.sh"
+hook_events_load
+
 usage() {
     echo "Usage: $0 [--dry-run] [--force] [component...]"
     echo ""
@@ -153,14 +157,25 @@ install_settings() {
     # walk to specific hook-event paths. The previous walk could false-positive
     # on any nested object with a `.command` field referencing a hook script
     # name (e.g. inside a comment field, or in an unrelated config section).
+    #
+    # Issue #17: inspect the full canonical event set (shared via
+    # hook-events.sh), not just PreToolUse/PostToolUse/SessionEnd. A Stop-only
+    # partial install was previously undetected, so a re-merge duplicated the
+    # Stop hook. Match any repo hook-script basename under any event.
     if [ "$FORCE" != "1" ] && [ -f "$target" ] && command -v jq >/dev/null 2>&1; then
-        if jq -r '
-            (.hooks.PreToolUse // [])[]?.hooks[]?.command,
-            (.hooks.PostToolUse // [])[]?.hooks[]?.command,
-            (.hooks.SessionEnd // [])[]?.hooks[]?.command
-            | select(. != null)
-        ' "$target" 2>/dev/null \
-            | grep -qE 'safety-block\.sh|safety-warn\.sh|log-tool-calls\.sh|log-rotate\.sh'; then
+        local hook_re=""
+        for h in "${REPO_DIR}"/hooks/*.sh; do
+            [ -f "$h" ] || continue
+            local b; b=$(basename "$h")
+            hook_re="${hook_re:+${hook_re}|}${b//./\\.}"
+        done
+        if [ -n "$hook_re" ] && jq -r '
+            ($ARGS.positional) as $events |
+            [ $events[] as $e |
+                (.hooks[$e] // [])[]?.hooks[]? | (.command // .prompt) ]
+            | .[] | select(. != null)
+        ' --args "${HOOK_EVENTS[@]}" < "$target" 2>/dev/null \
+            | grep -qE "$hook_re"; then
             ok "$target (already merged with claude-defaults hooks — skipping)"
             return
         fi

@@ -7,6 +7,11 @@ Lines that are not valid JSON are preserved unchanged so no data is lost. Run
 this once after editing `_log_core._PATTERNS` to scrub secrets that were
 captured before the new pattern existed.
 
+WARNING: the rewrite uses `os.replace`, which swaps in a new inode. Any process
+still appending to the old inode (a live logger) loses its concurrent writes
+silently. Run this only against rotated/inactive logs, or when no Claude session
+is active.
+
 Usage: python3 scripts/redact-existing-logs.py <log-file> [<log-file> ...]
 """
 from __future__ import annotations
@@ -37,9 +42,9 @@ def redact_file(path: str) -> tuple[int, int]:
     fd, tmp = tempfile.mkstemp(dir=dir_name, suffix=".redact.tmp")
     success = False
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as out, open(
-            path, encoding="utf-8"
-        ) as src:
+        with os.fdopen(
+            fd, "w", encoding="utf-8", errors="surrogateescape"
+        ) as out, open(path, encoding="utf-8", errors="surrogateescape") as src:
             for line in src:
                 stripped = line.rstrip("\n")
                 if not stripped:
@@ -55,6 +60,13 @@ def redact_file(path: str) -> tuple[int, int]:
                 if redacted != stripped:
                     changed += 1
                 out.write(redacted + "\n")
+        # mkstemp creates the temp file at 0600; carrying that into the live log
+        # via os.replace would tighten perms away from the logger's 0644.
+        try:
+            original_mode = os.stat(path).st_mode & 0o777
+        except OSError:
+            original_mode = 0o644
+        os.chmod(tmp, original_mode)
         os.replace(tmp, path)
         success = True
     finally:
@@ -66,7 +78,10 @@ def redact_file(path: str) -> tuple[int, int]:
 def main(argv: list[str]) -> int:
     if not argv:
         print(
-            "usage: redact-existing-logs.py <log-file> [<log-file> ...]",
+            "usage: redact-existing-logs.py <log-file> [<log-file> ...]\n"
+            "WARNING: rewrites each file via os.replace, which drops concurrent "
+            "writes to the old inode. Run only against rotated/inactive logs, "
+            "or when no Claude session is active.",
             file=sys.stderr,
         )
         return 2
