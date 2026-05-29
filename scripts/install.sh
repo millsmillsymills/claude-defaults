@@ -68,6 +68,17 @@ manifest_add() {
     echo "$1" >> "$MANIFEST"
 }
 
+# Print the sha256 hex digest of a file, empty if no checksum tool is available.
+# Recorded in the manifest for `created` entries so uninstall can detect
+# post-install edits and refuse to delete a file the user has changed.
+file_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" 2>/dev/null | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'
+    fi
+}
+
 # Resolve a symlink to the real file it points at (absolute path), handling both
 # absolute and relative link targets. Empty output if it can't be resolved.
 resolve_link() {
@@ -167,6 +178,9 @@ install_settings() {
             cp -p "$resolved" "${BACKUP_DIR}/$(basename "$target")"
             existing="${BACKUP_DIR}/$(basename "$target")"
             log "backed up (resolved symlink): $target -> ${BACKUP_DIR}/$(basename "$target")"
+            # Record that the original was a symlink so uninstall can warn that
+            # it restored content as a plain file rather than recreating the link.
+            manifest_add "wassymlink ${target} ${resolved}"
         fi
         rm -f "$target"
     elif [ -f "$target" ]; then
@@ -204,7 +218,7 @@ install_settings() {
         ok "settings copied (no merge): $target"
     else
         cp "${REPO_DIR}/settings.json" "$target"
-        manifest_add "created ${target}"
+        manifest_add "created ${target} $(file_sha256 "$target")"
         ok "settings -> $target"
     fi
 }
@@ -227,13 +241,14 @@ install_mcp() {
     # existing file before overwriting (it lives in $HOME, outside the
     # ~/.claude backup snapshot, so record the backup path in the manifest);
     # if it's a fresh creation, record that so uninstall can remove it.
+    local fresh=0
     if [ -f "$target" ]; then
         ensure_backup_dir
         cp -p "$target" "${BACKUP_DIR}/mcp.json"
         log "backed up: $target -> ${BACKUP_DIR}/mcp.json"
         manifest_add "mcpbackup ${BACKUP_DIR}/mcp.json"
     else
-        manifest_add "created ${target}"
+        fresh=1
     fi
 
     if [ -n "${EXA_API_KEY:-}" ]; then
@@ -245,6 +260,12 @@ install_mcp() {
         jq 'del(.mcpServers.exa)' \
             "${REPO_DIR}/mcp-template.json" > "$target"
         ok "mcp config -> $target (exa removed -- set EXA_API_KEY to include)"
+    fi
+
+    # Record the checksum after writing so uninstall can detect post-install
+    # edits and refuse to delete a file the user has since changed.
+    if [ "$fresh" = "1" ]; then
+        manifest_add "created ${target} $(file_sha256 "$target")"
     fi
 }
 

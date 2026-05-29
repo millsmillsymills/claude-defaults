@@ -149,6 +149,36 @@ bash "$REPO_DIR/scripts/uninstall.sh" >/dev/null || fail_msg "M7/M8: uninstall f
 export HOME="$HOME2_OLD"
 rm -rf "$TEST_HOME6"
 
+# #39-1: a pre-existing ~/.mcp.json is backed up into the snapshot dir, but
+# uninstall must NOT leave a stray ~/.claude/mcp.json behind from restoring it.
+TEST_HOME7=$(mktemp -d -t claude-defaults-strayy.XXXXXX)
+export HOME="$TEST_HOME7"
+mkdir -p "$TEST_HOME7/.claude"
+echo '{"mcpServers":{"mine":{"command":"foo"}}}' > "$TEST_HOME7/.mcp.json"
+bash "$REPO_DIR/scripts/install.sh" --force mcp settings >/dev/null || fail_msg "#39-1: install failed"
+bash "$REPO_DIR/scripts/uninstall.sh" >/dev/null || fail_msg "#39-1: uninstall failed"
+[ -e "$TEST_HOME7/.claude/mcp.json" ] && fail_msg "#39-1: stray ~/.claude/mcp.json left after uninstall"
+# Original ~/.mcp.json content must be restored, not removed.
+got=$(jq -r '.mcpServers.mine.command // ""' "$TEST_HOME7/.mcp.json" 2>/dev/null)
+[ "$got" = "foo" ] || fail_msg "#39-1: ~/.mcp.json not restored to original (got=$got)"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME7"
+
+# #39-3: a `created` file the user edits post-install must be preserved by
+# uninstall (checksum guard), not silently deleted.
+TEST_HOME8=$(mktemp -d -t claude-defaults-edited.XXXXXX)
+export HOME="$TEST_HOME8"
+mkdir -p "$TEST_HOME8/.claude"
+bash "$REPO_DIR/scripts/install.sh" mcp >/dev/null || fail_msg "#39-3: install failed"
+[ -f "$TEST_HOME8/.mcp.json" ] || fail_msg "#39-3: .mcp.json not created"
+echo '{"mcpServers":{"useredit":{"command":"bar"}}}' > "$TEST_HOME8/.mcp.json"
+bash "$REPO_DIR/scripts/uninstall.sh" >/dev/null || fail_msg "#39-3: uninstall failed"
+[ -f "$TEST_HOME8/.mcp.json" ] || fail_msg "#39-3: user-edited created file deleted by uninstall"
+got=$(jq -r '.mcpServers.useredit.command // ""' "$TEST_HOME8/.mcp.json" 2>/dev/null)
+[ "$got" = "bar" ] || fail_msg "#39-3: user edit not preserved (got=$got)"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME8"
+
 if [ "$fail" -eq 0 ]; then
     echo "test-install: PASS"
 else
