@@ -26,7 +26,8 @@ warn_security_skip() {
   local reason="$1"
   case "$SECURITY_HOOKS" in
   *" ${name} "*)
-    echo "run-hook.sh: SECURITY hook '${name}' SKIPPED (${reason}); destructive-command guard NOT enforced." >&2
+    echo "run-hook.sh: SECURITY hook '${name}' SKIPPED (${reason});" >&2
+    echo "  destructive-command guard NOT enforced. Run scripts/doctor.sh." >&2
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') ${name} ${reason}" \
       >>"${CLAUDE_DIR}/logs/hook-errors.log" 2>/dev/null || true
     ;;

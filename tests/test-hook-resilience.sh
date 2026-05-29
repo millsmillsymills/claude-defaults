@@ -64,10 +64,17 @@ bash "${REPO_DIR}/scripts/doctor.sh" --quick >/dev/null 2>&1 || true
 [ -L "${CLAUDE_DIR}/hooks/safety-block.py" ] || fail "doctor did not recreate missing symlink"
 pass "doctor recreates missing symlink"
 
-# --- Test 8: missing security .py hook + no python3 logs a durable skip ---
-# Force the python3-unavailable branch with an empty PATH (keep bash builtins).
+# --- Test 8: a security .py hook with python3 unavailable logs a durable skip ---
+# Build a PATH dir with the utils the wrapper needs (bash, mkdir, date, readlink,
+# dirname) but deliberately NOT python3, so `command -v python3` fails and the
+# security-skip branch fires. An empty PATH would break bash itself (exit 127).
 rm -f "${CLAUDE_DIR}/logs/hook-errors.log"
-out=$(echo '{}' | PATH="/nonexistent" bash "$WRAP" safety-block.py 2>&1) && rc=0 || rc=$?
+nopy_bin="$(mktemp -d)"
+for u in bash mkdir date readlink dirname; do
+  src="$(command -v "$u")" && ln -s "$src" "${nopy_bin}/${u}"
+done
+out=$(echo '{}' | PATH="$nopy_bin" "${nopy_bin}/bash" "$WRAP" safety-block.py 2>&1) && rc=0 || rc=$?
+rm -rf "$nopy_bin"
 [ "$rc" = "0" ] || fail "python3-missing security hook returned $rc (want 0)"
 echo "$out" | grep -q "SECURITY hook" || fail "no stderr warning on security skip"
 grep -q "safety-block.py" "${CLAUDE_DIR}/logs/hook-errors.log" 2>/dev/null ||
