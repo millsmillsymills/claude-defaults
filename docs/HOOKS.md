@@ -89,7 +89,7 @@ To tune: edit the `prompt` field in `settings.json` `hooks.Stop[0].hooks[0]`.
 
 `type: "prompt"` sends the assistant's full final response text to a fast model on every session end. Redaction (`_log_core.redact_value`) runs only in the JSONL logging path -- it never touches the Stop-hook channel. If Claude echoes a secret in its response (e.g. a connection URL surfaced while debugging), that text reaches the fast model unredacted.
 
-Low severity for a single-account local setup (primary and fast model share one account). It grows under shared deployments, multi-account routing, or providers that log requests. To avoid it entirely, remove the Stop hook or switch it to `type: "command"` with pre-redaction.
+Low severity for a single-account local setup (primary and fast model share one account). It grows under shared deployments, multi-account routing, or providers that log requests. To avoid it entirely, remove the Stop hook or switch it to `type: "command"` with pre-redaction -- but a `command` hook gets no LLM judgment, so the anti-rationalization loop would need reimplementing against its own logic.
 
 ## Adding your own hook
 
