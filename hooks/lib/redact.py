@@ -5,19 +5,20 @@ Reads a JSON value from stdin, walks it recursively, replaces secret-like
 substrings inside any string with REDACTED markers, and writes the
 modified JSON to stdout.
 
-Patterns covered:
-  - JWT tokens (eyJ...eyJ...sig)
-  - AWS access keys (AKIA + 16 chars)
-  - GitHub personal/OAuth/server/user tokens (gh[opsu]_...)
-  - Anthropic API keys (sk-ant-...)
-  - OpenAI API keys (sk-... 40-80 chars)
-  - key=value with key in {password, passwd, secret, token, api_key, api-key,
-    bearer, authorization}
-  - --flag=value with flag in {password, token, secret, api-key, api_key}
+Redaction has two layers (both defined in `_log_core.py`):
 
-Usage: python3 redact.py < input.json > output.json
+  1. Flat-string patterns (`_PATTERNS`) run on every string leaf: JWT, PEM
+     private-key blocks, AWS access/STS keys, GitHub tokens + fine-grained
+     PATs, Slack tokens, Anthropic keys, OpenAI keys (legacy + proj/svcacct/
+     admin), URL-userinfo passwords, compound env vars, generic key=value and
+     --flag=value secrets, and Authorization/Bearer headers.
+  2. Key-aware redaction (`_SECRET_KEY_RE`): any dict value under a key naming
+     a secret (password, token, api_key, authorization, ...) is replaced with
+     `***` regardless of the value's shape -- structured payloads carry the
+     secret in the value, not in `key=value` text.
 
-This is the canonical CLI; the shared patterns live in `_log_core.py`.
+`_log_core._PATTERNS` and `_SECRET_KEY_RE` are the source of truth; this list
+is a summary. Usage: python3 redact.py < input.json > output.json
 """
 from __future__ import annotations
 

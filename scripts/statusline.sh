@@ -15,7 +15,7 @@ stdin_data=$(cat)
 # Single jq call - extract all values at once
 # Prefer pre-calculated remaining_percentage (100 - remaining = used toward compact)
 # Fall back to manual calc from raw tokens if not available
-IFS=$' \t' read -r current_dir model_name cost lines_added lines_removed duration_ms ctx_used cache_pct < <(
+IFS=$'\t' read -r current_dir model_name cost lines_added lines_removed duration_ms ctx_used cache_pct < <(
     echo "$stdin_data" | jq -r '[
         .workspace.current_dir // "unknown",
         .model.display_name // "Unknown",
@@ -41,16 +41,18 @@ IFS=$' \t' read -r current_dir model_name cost lines_added lines_removed duratio
             else 0 end
         ) catch 0)
     ] | @tsv'
-)
+) || true  # read returns non-zero at EOF (empty/invalid stdin); fallback handles it
 
 # Bash-level fallback: if jq crashed entirely, extract fields individually
 if [ -z "$current_dir" ] && [ -z "$model_name" ]; then
-    current_dir=$(echo "$stdin_data" | jq -r '.workspace.current_dir // .cwd // "unknown"' 2>/dev/null)
-    model_name=$(echo "$stdin_data" | jq -r '.model.display_name // "Unknown"' 2>/dev/null)
-    cost=$(echo "$stdin_data" | jq -r '(.cost.total_cost_usd // 0)' 2>/dev/null)
-    lines_added=$(echo "$stdin_data" | jq -r '(.cost.total_lines_added // 0)' 2>/dev/null)
-    lines_removed=$(echo "$stdin_data" | jq -r '(.cost.total_lines_removed // 0)' 2>/dev/null)
-    duration_ms=$(echo "$stdin_data" | jq -r '(.cost.total_duration_ms // 0)' 2>/dev/null)
+    # `|| true`: on invalid JSON jq exits non-zero (pipefail), which would kill
+    # the assignment under set -e before the `:=` defaults below can apply.
+    current_dir=$(echo "$stdin_data" | jq -r '.workspace.current_dir // .cwd // "unknown"' 2>/dev/null) || true
+    model_name=$(echo "$stdin_data" | jq -r '.model.display_name // "Unknown"' 2>/dev/null) || true
+    cost=$(echo "$stdin_data" | jq -r '(.cost.total_cost_usd // 0)' 2>/dev/null) || true
+    lines_added=$(echo "$stdin_data" | jq -r '(.cost.total_lines_added // 0)' 2>/dev/null) || true
+    lines_removed=$(echo "$stdin_data" | jq -r '(.cost.total_lines_removed // 0)' 2>/dev/null) || true
+    duration_ms=$(echo "$stdin_data" | jq -r '(.cost.total_duration_ms // 0)' 2>/dev/null) || true
     ctx_used=""
     cache_pct="0"
     : "${current_dir:=unknown}"
@@ -61,10 +63,12 @@ if [ -z "$current_dir" ] && [ -z "$model_name" ]; then
     : "${duration_ms:=0}"
 fi
 
-# Git info
+# Git info (init first: in a non-git dir these stay empty without tripping set -e/-u)
+git_branch=""
+git_root=""
 if cd "$current_dir" 2>/dev/null; then
-    git_branch=$(git -c core.useBuiltinFSMonitor=false branch --show-current 2>/dev/null)
-    git_root=$(git -c core.useBuiltinFSMonitor=false rev-parse --show-toplevel 2>/dev/null)
+    git_branch=$(git -c core.useBuiltinFSMonitor=false branch --show-current 2>/dev/null) || true
+    git_root=$(git -c core.useBuiltinFSMonitor=false rev-parse --show-toplevel 2>/dev/null) || true
 fi
 
 # Build repo path display (folder name only for brevity)
