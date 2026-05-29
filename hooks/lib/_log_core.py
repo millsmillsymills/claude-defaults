@@ -43,6 +43,12 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # JWT (three base64url segments separated by dots, first two start with eyJ)
     (re.compile(r"eyJ[A-Za-z0-9_\-]{4,}\.eyJ[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}"),
      "***JWT***"),
+    # PEM private key blocks (any key type). Non-greedy between fixed anchors,
+    # DOTALL so it spans the newline-delimited body -- no backtracking risk.
+    (re.compile(
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+        re.DOTALL,
+    ), "***PRIVATE_KEY***"),
     # AWS access key
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "***AWS_KEY***"),
     # AWS STS temporary credential keys (separate prefix from AKIA)
@@ -51,27 +57,34 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bgh[opsu]_[A-Za-z0-9]{36,}\b"), "***GH_TOKEN***"),
     # GitHub fine-grained PATs (different prefix than gh[opsu]_)
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{30,}\b"), "***GH_PAT***"),
+    # Slack tokens (bot/user/workspace/refresh/app: xoxb-, xoxp-, xoxa-, xoxr-, xoxs-)
+    (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), "***SLACK_TOKEN***"),
     # Anthropic API keys
     (re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{8,}\b"), "***ANTHROPIC_KEY***"),
-    # OpenAI keys (sk- followed by 40+ base62 chars; bounded)
-    (re.compile(r"\bsk-[A-Za-z0-9]{40,80}\b"), "***OPENAI_KEY***"),
-    # URL userinfo passwords: postgresql://user:password@host/db -- redact the
-    # password between : and @ while preserving the user and the host.
-    (re.compile(r"(://[^:@\s/]+):([^@\s]{4,})@"), r"\1:***@"),
-    # Compound SCREAMING_SNAKE env vars: DB_PASSWORD=, APP_SECRET_KEY=,
-    # AWS_SECRET_ACCESS_KEY=. The previous \b-anchored pattern misses these
-    # because _ is a word character (no boundary before "PASSWORD").
-    # Require `_` before the suffix word to avoid matches inside ordinary
-    # words (e.g. MONKEY, BUCKET, TICKET would otherwise hit "KEY"/"TOKEN").
+    # OpenAI keys -- legacy (sk-...) and modern project/service/admin keys
+    # (sk-proj-, sk-svcacct-, sk-admin-) which contain - and _ and run long.
+    # Runs after the Anthropic pattern so sk-ant- keys keep their own marker.
+    (re.compile(r"\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_\-]{20,}\b"),
+     "***OPENAI_KEY***"),
+    # URL userinfo passwords: postgresql://user:password@host/db -- redact any
+    # non-empty password between : and @ while preserving the user and host.
+    (re.compile(r"(://[^:@\s/]+):([^@\s]{1,})@"), r"\1:***@"),
+    # Compound env vars: DB_PASSWORD=, app_secret_key=, AWS_SECRET_ACCESS_KEY=.
+    # A plain \b-anchored pattern misses these because _ is a word character
+    # (no boundary before "PASSWORD"). Require `_` before the suffix word to
+    # avoid matches inside ordinary words (MONKEY, BUCKET, TICKET would hit
+    # "KEY"/"TOKEN"). Case-insensitive so lowercase/mixed-case names match too.
     (re.compile(
-        r"([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*"
+        r"([A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*"
         r"_(?:PASSWORD|PASSWD|SECRET|TOKEN|KEY|PAT|CREDENTIAL|CREDENTIALS|AUTH))"
-        r"(\s*=\s*)([^\s,;'\"]{3,})"
+        r"(\s*=\s*)([^\s,;'\"]{1,})",
+        re.IGNORECASE,
     ), r"\1\2***"),
-    # key=value secrets where value is a single shell/URL token (no internal whitespace)
+    # key=value secrets where value is a single shell/URL token (no internal
+    # whitespace). No minimum value length -- a named secret of any size leaks.
     (re.compile(
         r"(?i)\b(password|passwd|secret|token|api[_-]?key)"
-        r"(\s*[:=]\s*)([^\s,;'\"]{3,})"
+        r"(\s*[:=]\s*)([^\s,;'\"]{1,})"
     ), r"\1\2***"),
     # Header-style: Authorization: <scheme> <credential...>; Bearer <token>
     # Value class allows internal spaces; stops at line/quote/comma/semicolon.
@@ -102,20 +115,36 @@ def redact_string(s: str) -> str:
     return s
 
 
+# Dict keys whose value is a secret regardless of the value's shape. The flat
+# string patterns above only fire on `key=value` text; structured payloads
+# (MCP args, env maps, config objects) carry the secret as a bare JSON value
+# under a sensitive key, so the key itself is the signal.
+_SECRET_KEY_RE = re.compile(
+    r"(?i)(?:password|passwd|secret|token|api[_-]?key|access[_-]?key"
+    r"|private[_-]?key|authorization|bearer|credentials?)"
+)
+
+
 def redact_value(v: object) -> object:
-    """Recursively walk a JSON-decoded value, redacting strings.
+    """Recursively walk a JSON-decoded value, redacting strings and secret keys.
 
     Walks dicts, lists, and strings; passes through other JSON scalar types
-    (int, float, bool, None) unchanged. Dict keys are NOT walked (assumed
-    safe; tool-call payloads from Claude Code don't put secrets in keys).
-    Returns a new structure -- the input is not mutated.
+    (int, float, bool, None) unchanged. When a dict key names a secret
+    (`password`, `api_key`, `authorization`, ...), its entire value is replaced
+    with `***` regardless of shape -- structured payloads put the secret in the
+    value, not in `key=value` text. Returns a new structure; input is not
+    mutated.
     """
     if isinstance(v, str):
         return redact_string(v)
     if isinstance(v, list):
         return [redact_value(x) for x in v]
     if isinstance(v, dict):
-        return {k: redact_value(val) for k, val in v.items()}
+        return {
+            k: "***" if isinstance(k, str) and _SECRET_KEY_RE.search(k)
+            else redact_value(val)
+            for k, val in v.items()
+        }
     return v
 
 
