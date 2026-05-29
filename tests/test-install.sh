@@ -96,6 +96,59 @@ got=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command // ""' "$TEST_HOME2/.claude/s
 export HOME="$HOME2_OLD"
 rm -rf "$TEST_HOME2"
 
+# H8: re-running with --force must not duplicate hook blocks.
+TEST_HOME3=$(mktemp -d -t claude-defaults-force.XXXXXX)
+export HOME="$TEST_HOME3"
+mkdir -p "$TEST_HOME3/.claude"
+bash "$REPO_DIR/scripts/install.sh" settings >/dev/null || fail_msg "H8: first settings install failed"
+n1=$(jq '.hooks.PreToolUse | length' "$TEST_HOME3/.claude/settings.json")
+bash "$REPO_DIR/scripts/install.sh" --force settings >/dev/null || fail_msg "H8: --force settings failed"
+n2=$(jq '.hooks.PreToolUse | length' "$TEST_HOME3/.claude/settings.json")
+[ "$n1" = "$n2" ] || fail_msg "H8: PreToolUse grew $n1 -> $n2 on --force re-merge"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME3"
+
+# M4: a symlinked settings.json must be merged, not discarded.
+TEST_HOME4=$(mktemp -d -t claude-defaults-symlink.XXXXXX)
+export HOME="$TEST_HOME4"
+mkdir -p "$TEST_HOME4/.claude"
+cat > "$TEST_HOME4/real-settings.json" <<'PRE'
+{"enabledPlugins":{"x@y":true},"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo SYMLINK-CUSTOM-HOOK"}]}]}}
+PRE
+ln -s "$TEST_HOME4/real-settings.json" "$TEST_HOME4/.claude/settings.json"
+bash "$REPO_DIR/scripts/install.sh" settings >/dev/null || fail_msg "M4: install with symlinked settings failed"
+[ -L "$TEST_HOME4/.claude/settings.json" ] && fail_msg "M4: settings.json still a symlink after install"
+got=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command // ""' "$TEST_HOME4/.claude/settings.json" | grep -c 'SYMLINK-CUSTOM-HOOK')
+[ "$got" -ge 1 ] || fail_msg "M4: symlinked user settings discarded (custom hook count=$got)"
+got=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command // ""' "$TEST_HOME4/.claude/settings.json" | grep -c 'safety-block.sh')
+[ "$got" -ge 1 ] || fail_msg "M4: template hooks missing after symlink merge (count=$got)"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME4"
+
+# M9: --force overwrite of ~/.mcp.json must back up the existing file first.
+TEST_HOME5=$(mktemp -d -t claude-defaults-mcp.XXXXXX)
+export HOME="$TEST_HOME5"
+mkdir -p "$TEST_HOME5/.claude"
+echo '{"mcpServers":{"mine":{"command":"foo"}}}' > "$TEST_HOME5/.mcp.json"
+bash "$REPO_DIR/scripts/install.sh" --force mcp >/dev/null || fail_msg "M9: --force mcp failed"
+mcp_backup=$(cat "$TEST_HOME5/.claude/backups/pre-claude-defaults-"*/mcp.json 2>/dev/null | grep -c 'mine' || true)
+[ "$mcp_backup" -ge 1 ] || fail_msg "M9: existing ~/.mcp.json not backed up before --force overwrite"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME5"
+
+# M7/M8: uninstall must reverse files install created fresh (no prior backup).
+TEST_HOME6=$(mktemp -d -t claude-defaults-reverse.XXXXXX)
+export HOME="$TEST_HOME6"
+mkdir -p "$TEST_HOME6/.claude"
+bash "$REPO_DIR/scripts/install.sh" settings mcp >/dev/null || fail_msg "M7/M8: fresh install failed"
+[ -f "$TEST_HOME6/.claude/settings.json" ] || fail_msg "M7: settings.json not created"
+[ -f "$TEST_HOME6/.mcp.json" ] || fail_msg "M8: .mcp.json not created"
+bash "$REPO_DIR/scripts/uninstall.sh" >/dev/null || fail_msg "M7/M8: uninstall failed"
+[ -f "$TEST_HOME6/.claude/settings.json" ] && fail_msg "M7: fresh-created settings.json left behind after uninstall"
+[ -f "$TEST_HOME6/.mcp.json" ] && fail_msg "M8: fresh-created ~/.mcp.json left behind after uninstall"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME6"
+
 if [ "$fail" -eq 0 ]; then
     echo "test-install: PASS"
 else

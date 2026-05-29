@@ -1,0 +1,25 @@
+{
+  "run_id": "20260426-132457-db430c72",
+  "branch": "feat/centralize-config",
+  "head_sha": "489b21c",
+  "applied_fixes": ["P1-1", "P1-2", "P1-3", "P1-4", "P1-5", "P1-6", "P1-7", "P1-8", "P1-9", "P1-10"],
+  "applied_fix_commits": [
+    "57fcf51 (P1-10 jq validation)",
+    "c25b0d0 (P1-9 docs both-files)",
+    "b5e6c77 (P1-5/6/7/8 test coverage)",
+    "e689246 (P1-3 _log_core refactor)",
+    "44accdf (P1-4 extended redaction patterns)",
+    "33ae891 (P1-1 call_id pairing)",
+    "489b21c (P1-2 hooks merge preserves user)"
+  ],
+  "remaining_p1": [],
+  "base_sha": "495485f78ac5213c23473bd4ffb99e7638db76a8",
+  "verdict": "Ready with fixes",
+  "completed_at": "2026-04-26T13:50:00Z",
+  "reviewer_count": 11,
+  "reviewer_failures": 0,
+  "p0_count": 0,
+  "p1_count": 10,
+  "p2_count": 14,
+  "p3_count": 11
+}

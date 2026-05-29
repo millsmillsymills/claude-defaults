@@ -1,0 +1,15 @@
+{
+  "reviewer": "testing",
+  "run_id": "20260426-141420-9db4ced2",
+  "findings": [
+    {"id": "T-1", "severity": "P2", "confidence": 0.92, "title": "call_id pairing test passes even if post used the glob fallback rather than the exact pair file"},
+    {"id": "T-2", "severity": "P2", "confidence": 0.91, "title": "pair-file round-trip test never reads the post row's call_id and compares it to what was stored in the pair file"},
+    {"id": "T-3", "severity": "P2", "confidence": 0.88, "title": "P1-2 user-hook survival test only plants a custom hook under PreToolUse — bug dropping user hooks for PostToolUse or SessionEnd is invisible"},
+    {"id": "T-4", "severity": "P2", "confidence": 0.87, "title": "log-rotate.sh rotation branch (gzip when size >= ROTATE_BYTES) has no test"},
+    {"id": "T-5", "severity": "P2", "confidence": 0.85, "title": "truncate_output's <=256 byte guard has no test"},
+    {"id": "T-6", "severity": "P3", "confidence": 0.83, "title": "safety-block.sh $() command substitution behavior is untested"},
+    {"id": "T-7", "severity": "P3", "confidence": 0.82, "title": "install.sh --dry-run and --force branches untested"},
+    {"id": "T-8", "severity": "P3", "confidence": 0.80, "title": "Pair file 0o600 permission asserted nowhere"},
+    {"id": "T-9", "severity": "P3", "confidence": 0.78, "title": "Post-path glob fallback when pair file is absent is untested"}
+  ]
+}

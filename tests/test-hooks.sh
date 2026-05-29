@@ -77,6 +77,24 @@ bash hooks/safety-warn.sh < tests/fixtures/tool-input-edit-normal.json 2>/tmp/wa
 [ -s /tmp/warn-stderr ] && fail_msg "safety-warn.sh warned on normal file"
 rm -f /tmp/warn-stderr
 
+# safety-warn.sh broader sensitive-path coverage (beyond .env)
+echo "  testing safety-warn.sh broader sensitive paths"
+warn_paths=(
+    "/home/u/.ssh/id_rsa"
+    "/etc/ssl/server.pem"
+    "/x/private.key"
+    "/x/secrets.yaml"
+    "/x/credentials.json"
+)
+for p in "${warn_paths[@]}"; do
+    jq -nc --arg f "$p" '{tool_input:{file_path:$f}}' | bash hooks/safety-warn.sh 2>/tmp/warn-stderr
+    [ -s /tmp/warn-stderr ] || fail_msg "safety-warn.sh did not warn on $p"
+done
+# negative: an ordinary file must not warn
+jq -nc '{tool_input:{file_path:"/x/notes.txt"}}' | bash hooks/safety-warn.sh 2>/tmp/warn-stderr
+[ -s /tmp/warn-stderr ] && fail_msg "safety-warn.sh warned on ordinary file /x/notes.txt"
+rm -f /tmp/warn-stderr
+
 # === log-tool-calls.sh ===
 echo "  testing log-tool-calls.sh"
 today=$(date +%Y-%m-%d)
@@ -163,6 +181,36 @@ echo "$pair_response" | bash hooks/log-tool-calls.sh post
 pair_count_after=$(ls "${TMPDIR:-/tmp}"/claude-tool-pair-test-xyz-* 2>/dev/null | wc -l | tr -d ' ')
 [ "$pair_count_after" = "0" ] || fail_msg "pair file not cleaned up after post (count=$pair_count_after)"
 
+# Writer names log files by UTC date; query that file directly.
+utc_log="$TEST_HOME/.claude/logs/tool-calls-$(date -u +%Y-%m-%d).jsonl"
+
+# === H9: non-zero exit_status is recorded ===
+echo "  testing non-zero exit_status"
+nz_pre='{"session_id":"nz","cwd":"/tmp","tool_name":"Bash","tool_input":{"command":"false"}}'
+nz_post='{"session_id":"nz","cwd":"/tmp","tool_name":"Bash","tool_input":{"command":"false"},"tool_response":{"stdout":"","stderr":"boom","exit_code":1}}'
+echo "$nz_pre" | bash hooks/log-tool-calls.sh pre
+echo "$nz_post" | bash hooks/log-tool-calls.sh post
+last=$(jq -c 'select(.event=="post" and .session_id=="nz")' "$utc_log" | tail -n 1)
+echo "$last" | jq -e '.exit_status == 1' >/dev/null \
+    || fail_msg "H9: non-zero exit_status not recorded: $last"
+
+# === L8: post with no preceding pre (fresh call_id, duration_ms 0) ===
+echo "  testing post-without-pre fallback"
+np_post='{"session_id":"nopre-unique-xyz","cwd":"/tmp","tool_name":"Bash","tool_input":{"command":"echo lonely"},"tool_response":{"stdout":"lonely\n","exit_code":0}}'
+echo "$np_post" | bash hooks/log-tool-calls.sh post
+last=$(jq -c 'select(.event=="post" and .session_id=="nopre-unique-xyz")' "$utc_log" | tail -n 1)
+echo "$last" | jq -e '(.call_id | type == "string" and length > 0) and .duration_ms == 0' >/dev/null \
+    || fail_msg "L8: post-without-pre row malformed: $last"
+
+# === M13: oversized output is truncated under the line-byte cap ===
+echo "  testing output truncation"
+big=$(python3 -c 'print("x" * 5000)')
+tr_post=$(jq -nc --arg s "$big" '{session_id:"trunc",cwd:"/tmp",tool_name:"Bash",tool_input:{command:"echo big"},tool_response:{stdout:$s,exit_code:0}}')
+echo "$tr_post" | CLAUDE_LOG_MAX_LINE_BYTES=1024 bash hooks/log-tool-calls.sh post
+last=$(jq -c 'select(.event=="post" and .session_id=="trunc")' "$utc_log" | tail -n 1)
+echo "$last" | jq -e '.output._truncated_bytes > 0 and (.output.stdout | length) < 5000' >/dev/null \
+    || fail_msg "M13: output not truncated / marker missing: $last"
+
 # === log-rotate.sh ===
 echo "  testing log-rotate.sh"
 old="$TEST_HOME/.claude/logs/tool-calls-2025-01-01.jsonl"
@@ -170,6 +218,18 @@ touch "$old"
 touch -t "$(date -v-100d +%Y%m%d0000 2>/dev/null || date -d '100 days ago' +%Y%m%d0000)" "$old"
 CLAUDE_LOG_RETAIN_DAYS=90 bash hooks/log-rotate.sh
 [ -f "$old" ] && fail_msg "log-rotate.sh did not prune old log"
+
+# === M12: size-based gzip rotation (+ .N.gz collision bump) ===
+echo "  testing log-rotate.sh gzip rotation"
+rot_log="$TEST_HOME/.claude/logs/tool-calls-$(date -u +%Y-%m-%d).jsonl"
+mkdir -p "$(dirname "$rot_log")"
+printf 'first\n' > "$rot_log"
+CLAUDE_LOG_ROTATE_BYTES=1 bash hooks/log-rotate.sh
+[ -f "${rot_log}.1.gz" ] || fail_msg "M12: rotation did not create .1.gz"
+[ -f "$rot_log" ] && fail_msg "M12: original log not removed after rotation"
+printf 'second\n' > "$rot_log"
+CLAUDE_LOG_ROTATE_BYTES=1 bash hooks/log-rotate.sh
+[ -f "${rot_log}.2.gz" ] || fail_msg "M12: collision did not bump to .2.gz"
 
 # === existing block-rm-rf.sh / block-push-main.sh (regression) ===
 echo "  testing legacy block hooks"

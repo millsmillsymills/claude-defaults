@@ -63,7 +63,7 @@ Copy `settings.json` to `~/.claude/settings.json` (or merge entries into your ex
 - **alwaysThinkingEnabled: true** -- persists extended thinking across sessions. Toggle per-session with Option+T. Adds latency and cost on simple tasks; worth it for complex reasoning.
 - **permissions** -- deny rules that block reading credentials/secrets and editing shell config (see [Sandboxing](#sandboxing))
 - **cleanupPeriodDays: 365** -- keeps conversation history for a year instead of the default 30 days, so `/insights` has more data
-- **hooks** -- two PreToolUse hooks on Bash that block `rm -rf` and direct push to main (see [Hooks](#hooks))
+- **hooks** -- PreToolUse Bash blockers (`rm -rf`, push to main, extended destructive patterns), a PreToolUse Edit/Write sensitive-path warning, PreToolUse/PostToolUse tool-call logging, a SessionEnd log-rotate, and a Stop anti-rationalization prompt (see [Hooks](#hooks))
 - **statusLine** -- points to the statusline script (see below)
 
 ## Statusline
@@ -170,24 +170,6 @@ Guide and examples: [Automate workflows with hooks](https://docs.anthropic.com/e
 These are patterns to adapt, not drop-in configs. Only the two blocking hooks in `settings.json` are recommended defaults. Everything else below is here for inspiration -- read the code, understand what it does, and tailor it to your workflow before using it.
 
 **Blocking patterns** (PreToolUse, in settings.json): The two hooks in this repo's `settings.json` block `rm -rf` (suggests trash instead) and direct push to main/master (requires feature branches). Both read the Bash command from stdin via jq, match with regex, and exit 2 with an error message that tells Claude what to do instead. See `hooks/block-rm-rf.sh` and `hooks/block-push-main.sh`.
-
-**Bash command log** (PostToolUse): Appends every Bash command the agent runs to a log file with a timestamp. Useful for post-session review of what the agent actually did. See `hooks/log-bash-commands.sh`.
-
-```json
-{
-  "PostToolUse": [
-    {
-      "matcher": "Bash",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "jq -r '\"[\" + (now | todate) + \"] \" + .tool_input.command' >> ~/.claude/bash-commands.log"
-        }
-      ]
-    }
-  ]
-}
-```
 
 **Desktop notifications** (Notification): Fires a native OS notification when Claude needs your attention, so you can switch to other work during long autonomous runs instead of watching the terminal.
 
@@ -360,7 +342,6 @@ claude-defaults/
 │   ├── block-rm-rf.sh              # legacy: block rm -rf (active)
 │   ├── block-push-main.sh          # legacy: block push to main (active)
 │   ├── enforce-package-manager.sh  # opt-in: enforce pnpm/yarn
-│   ├── log-bash-commands.sh        # opt-in: plain audit log (superseded by log-tool-calls.sh)
 │   ├── safety-block.sh             # NEW: extended destructive-pattern blocks (active)
 │   ├── safety-warn.sh              # NEW: warn on sensitive Edit/Write (active)
 │   ├── log-tool-calls.sh           # NEW: rich JSONL log of every tool call (active)
@@ -369,8 +350,7 @@ claude-defaults/
 │       ├── _log_core.py            # shared patterns + truncation + atomic append
 │       ├── redact.py               # secret-pattern redaction CLI (uses _log_core)
 │       ├── jsonl_write.py          # atomic JSONL append + truncation CLI
-│       ├── log_tool_call.py        # consolidated pre/post logger (uses _log_core)
-│       └── common.sh               # shared bash helpers
+│       └── log_tool_call.py        # consolidated pre/post logger (uses _log_core)
 ├── commands/
 │   ├── review-pr.md                # /review-pr <number>
 │   ├── fix-issue.md                # /fix-issue <number>
@@ -380,7 +360,8 @@ claude-defaults/
 ├── docs/
 │   ├── HOOKS.md                    # every hook documented
 │   ├── LOGGING.md                  # log schema, queries, rotation
-│   └── PROMOTION-RATIONALE.md      # what was/wasn't promoted from resurgent
+│   ├── PROMOTION-RATIONALE.md      # what was/wasn't promoted from resurgent
+│   └── superpowers/                # specs and implementation plans
 └── tests/
     ├── run-all.sh                  # dispatcher
     ├── test-install.sh             # install/uninstall roundtrip

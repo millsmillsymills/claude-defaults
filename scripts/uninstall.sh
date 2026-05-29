@@ -8,6 +8,7 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CLAUDE_DIR="${HOME}/.claude"
+MANIFEST="${CLAUDE_DIR}/.claude-defaults-install.manifest"
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
 
@@ -16,8 +17,8 @@ ok()  { echo "  OK: $1"; }
 warn(){ echo "  WARN: $1" >&2; }
 dry() { echo "  DRY-RUN: $1"; }
 
-# Find latest backup
-LATEST_BACKUP=$(ls -1d "${CLAUDE_DIR}/backups/pre-claude-defaults-"* 2>/dev/null | tail -n1 || true)
+# Find latest backup (timestamped names sort lexically, newest last)
+LATEST_BACKUP=$(find "${CLAUDE_DIR}/backups" -maxdepth 1 -type d -name 'pre-claude-defaults-*' 2>/dev/null | sort | tail -n1 || true)
 echo "claude-defaults uninstaller"
 echo "  repo: $REPO_DIR"
 echo "  target: $CLAUDE_DIR"
@@ -74,6 +75,39 @@ if [ -n "$LATEST_BACKUP" ] && [ -d "$LATEST_BACKUP" ]; then
             log "restored: $dst"
         done
     fi
+fi
+
+# Reverse fresh creations and home-dir overwrites recorded at install time.
+# The backup snapshot above only covers files that lived under ~/.claude and
+# already existed; the manifest covers files install created from nothing
+# (settings.json, ~/.mcp.json) and ~/.mcp.json overwrites it backed up.
+if [ -f "$MANIFEST" ]; then
+    while read -r action arg; do
+        [ -n "${action:-}" ] || continue
+        case "$action" in
+            created)
+                if [ -f "$arg" ] && [ ! -L "$arg" ]; then
+                    if [ "$DRY_RUN" = "1" ]; then
+                        dry "remove install-created file $arg"
+                    else
+                        rm -f "$arg"
+                        ok "removed (created by install): $arg"
+                    fi
+                fi
+                ;;
+            mcpbackup)
+                if [ -f "$arg" ]; then
+                    if [ "$DRY_RUN" = "1" ]; then
+                        dry "restore $arg -> ${HOME}/.mcp.json"
+                    else
+                        cp -p "$arg" "${HOME}/.mcp.json"
+                        ok "restored: ${HOME}/.mcp.json"
+                    fi
+                fi
+                ;;
+        esac
+    done < "$MANIFEST"
+    [ "$DRY_RUN" = "1" ] || rm -f "$MANIFEST"
 fi
 
 echo ""
