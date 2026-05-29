@@ -231,6 +231,34 @@ printf 'second\n' > "$rot_log"
 CLAUDE_LOG_ROTATE_BYTES=1 bash hooks/log-rotate.sh
 [ -f "${rot_log}.2.gz" ] || fail_msg "M12: collision did not bump to .2.gz"
 
+# === Issue #7: gzip rotation produces a valid, faithful archive ===
+echo "  testing log-rotate.sh gzip integrity (issue #7)"
+gz_log="$TEST_HOME/.claude/logs/tool-calls-$(date -u +%Y-%m-%d).jsonl"
+rm -f "${gz_log}".*.gz
+gz_payload=$(python3 -c 'print("line-" + "x" * 4096)')
+printf '%s\n' "$gz_payload" > "$gz_log"
+CLAUDE_LOG_ROTATE_BYTES=1 bash hooks/log-rotate.sh
+[ -f "$gz_log" ] && fail_msg "issue #7: original log not removed after gzip rotation"
+gz_out="${gz_log}.1.gz"
+[ -f "$gz_out" ] || fail_msg "issue #7: rotation did not create .1.gz"
+gzip -t "$gz_out" 2>/dev/null || fail_msg "issue #7: rotated .gz failed integrity check"
+[ -e "${gz_log}.1.gz.tmp" ] && fail_msg "issue #7: tmp file left behind after rotation"
+decompressed=$(gzip -dc "$gz_out" 2>/dev/null)
+[ "$decompressed" = "$gz_payload" ] || fail_msg "issue #7: decompressed content does not match original"
+
+# === Issue #12: mid-session rotation fires via the pre path ===
+echo "  testing mid-session rotation via pre path (issue #12)"
+ms_log="$TEST_HOME/.claude/logs/tool-calls-$(date -u +%Y-%m-%d).jsonl"
+rm -f "${ms_log}".*.gz
+python3 -c 'open("'"$ms_log"'", "w").write("seed-row\n" * 200)'
+# The check is gated to every 100th pre-call; prime the counter to 99 so the
+# next pre-call lands on the modulo boundary and triggers the rotation.
+echo 99 > "$TEST_HOME/.claude/logs/.rotate-counter"
+ms_input='{"session_id":"ms-rotate","cwd":"/tmp","tool_name":"Bash","tool_input":{"command":"echo midsession"}}'
+echo "$ms_input" | CLAUDE_LOG_ROTATE_BYTES=64 bash hooks/log-tool-calls.sh pre
+ms_gz_count=$(ls "${ms_log}".*.gz 2>/dev/null | wc -l | tr -d ' ')
+[ "$ms_gz_count" -ge 1 ] || fail_msg "issue #12: mid-session pre call did not rotate oversize log"
+
 # === existing block-rm-rf.sh / block-push-main.sh (regression) ===
 echo "  testing legacy block hooks"
 bash hooks/block-rm-rf.sh <<< '{"tool_input":{"command":"rm -rf /tmp"}}'
