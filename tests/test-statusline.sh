@@ -2,10 +2,13 @@
 # statusline.sh must render (exit 0, non-empty) for every session shape:
 # git repo, non-git dir, non-existent dir, multi-word model, empty/invalid stdin.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 fail=0
-fail_msg() { echo "FAIL: $1" >&2; fail=$((fail + 1)); }
+fail_msg() {
+  echo "FAIL: $1" >&2
+  fail=$((fail + 1))
+}
 
 run_statusline() { bash scripts/statusline.sh 2>&1; }
 
@@ -29,6 +32,7 @@ rmdir "$tmpd" 2>/dev/null || true
 json='{"workspace":{"current_dir":"/tmp"},"model":{"display_name":"Claude Opus 4"},"cost":{"total_cost_usd":1.23}}'
 out=$(printf '%s' "$json" | run_statusline)
 echo "$out" | grep -qF 'Opus 4' || fail_msg "multi-word model mangled: $out"
+# shellcheck disable=SC2016  # '$1.23' is a literal dollar amount to match, not a variable
 echo "$out" | grep -qF '$1.23' || fail_msg "cost shifted by model split: $out"
 
 # #40: remaining_percentage >100 yields ctx_used <0, which must clamp to [0,100]

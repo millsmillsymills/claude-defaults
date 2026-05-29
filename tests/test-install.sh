@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Roundtrip test: isolated $HOME, install, validate, uninstall.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 REPO_DIR="$(pwd)"
 TEST_HOME=$(mktemp -d -t claude-defaults-test.XXXXXX)
-trap "rm -rf $TEST_HOME" EXIT
+trap 'rm -rf "$TEST_HOME"' EXIT
 export HOME="$TEST_HOME"
 mkdir -p "$TEST_HOME/.claude"
 
 # Pre-existing settings.json (machine-specific entries that must survive)
-cat > "$TEST_HOME/.claude/settings.json" <<'PRE'
+cat >"$TEST_HOME/.claude/settings.json" <<'PRE'
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "enabledPlugins": {"foo@bar": true, "baz@qux": false},
@@ -20,10 +20,13 @@ PRE
 
 # Pre-existing skill (must survive)
 mkdir -p "$TEST_HOME/.claude/skills/legacy-skill"
-echo "# legacy" > "$TEST_HOME/.claude/skills/legacy-skill/SKILL.md"
+echo "# legacy" >"$TEST_HOME/.claude/skills/legacy-skill/SKILL.md"
 
 fail=0
-fail_msg() { echo "FAIL: $1" >&2; fail=$((fail+1)); }
+fail_msg() {
+  echo "FAIL: $1" >&2
+  fail=$((fail + 1))
+}
 
 # Run installer
 bash "$REPO_DIR/scripts/install.sh" >/dev/null || fail_msg "install.sh exited non-zero"
@@ -68,7 +71,7 @@ TEST_HOME2=$(mktemp -d -t claude-defaults-userhook.XXXXXX)
 HOME2_OLD="$HOME"
 export HOME="$TEST_HOME2"
 mkdir -p "$TEST_HOME2/.claude"
-cat > "$TEST_HOME2/.claude/settings.json" <<'PRE'
+cat >"$TEST_HOME2/.claude/settings.json" <<'PRE'
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "enabledPlugins": {"foo@bar": true},
@@ -112,7 +115,7 @@ rm -rf "$TEST_HOME3"
 TEST_HOME4=$(mktemp -d -t claude-defaults-symlink.XXXXXX)
 export HOME="$TEST_HOME4"
 mkdir -p "$TEST_HOME4/.claude"
-cat > "$TEST_HOME4/real-settings.json" <<'PRE'
+cat >"$TEST_HOME4/real-settings.json" <<'PRE'
 {"enabledPlugins":{"x@y":true},"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo SYMLINK-CUSTOM-HOOK"}]}]}}
 PRE
 ln -s "$TEST_HOME4/real-settings.json" "$TEST_HOME4/.claude/settings.json"
@@ -129,7 +132,7 @@ rm -rf "$TEST_HOME4"
 TEST_HOME5=$(mktemp -d -t claude-defaults-mcp.XXXXXX)
 export HOME="$TEST_HOME5"
 mkdir -p "$TEST_HOME5/.claude"
-echo '{"mcpServers":{"mine":{"command":"foo"}}}' > "$TEST_HOME5/.mcp.json"
+echo '{"mcpServers":{"mine":{"command":"foo"}}}' >"$TEST_HOME5/.mcp.json"
 bash "$REPO_DIR/scripts/install.sh" --force mcp >/dev/null || fail_msg "M9: --force mcp failed"
 mcp_backup=$(cat "$TEST_HOME5/.claude/backups/pre-claude-defaults-"*/mcp.json 2>/dev/null | grep -c 'mine' || true)
 [ "$mcp_backup" -ge 1 ] || fail_msg "M9: existing ~/.mcp.json not backed up before --force overwrite"
@@ -154,7 +157,7 @@ rm -rf "$TEST_HOME6"
 TEST_HOME7=$(mktemp -d -t claude-defaults-strayy.XXXXXX)
 export HOME="$TEST_HOME7"
 mkdir -p "$TEST_HOME7/.claude"
-echo '{"mcpServers":{"mine":{"command":"foo"}}}' > "$TEST_HOME7/.mcp.json"
+echo '{"mcpServers":{"mine":{"command":"foo"}}}' >"$TEST_HOME7/.mcp.json"
 bash "$REPO_DIR/scripts/install.sh" --force mcp settings >/dev/null || fail_msg "#39-1: install failed"
 bash "$REPO_DIR/scripts/uninstall.sh" >/dev/null || fail_msg "#39-1: uninstall failed"
 [ -e "$TEST_HOME7/.claude/mcp.json" ] && fail_msg "#39-1: stray ~/.claude/mcp.json left after uninstall"
@@ -171,7 +174,7 @@ export HOME="$TEST_HOME8"
 mkdir -p "$TEST_HOME8/.claude"
 bash "$REPO_DIR/scripts/install.sh" mcp >/dev/null || fail_msg "#39-3: install failed"
 [ -f "$TEST_HOME8/.mcp.json" ] || fail_msg "#39-3: .mcp.json not created"
-echo '{"mcpServers":{"useredit":{"command":"bar"}}}' > "$TEST_HOME8/.mcp.json"
+echo '{"mcpServers":{"useredit":{"command":"bar"}}}' >"$TEST_HOME8/.mcp.json"
 bash "$REPO_DIR/scripts/uninstall.sh" >/dev/null || fail_msg "#39-3: uninstall failed"
 [ -f "$TEST_HOME8/.mcp.json" ] || fail_msg "#39-3: user-edited created file deleted by uninstall"
 got=$(jq -r '.mcpServers.useredit.command // ""' "$TEST_HOME8/.mcp.json" 2>/dev/null)
@@ -186,10 +189,10 @@ export HOME="$TEST_HOME7"
 mkdir -p "$TEST_HOME7/.claude"
 bash "$REPO_DIR/scripts/install.sh" settings >/dev/null || fail_msg "#17: first settings install failed"
 for ev in PreToolUse PostToolUse Stop SessionEnd; do
-    before=$(jq "[.hooks.${ev}[]?.hooks[]?] | length" "$TEST_HOME7/.claude/settings.json")
-    bash "$REPO_DIR/scripts/install.sh" --force settings >/dev/null || fail_msg "#17: --force settings failed ($ev)"
-    after=$(jq "[.hooks.${ev}[]?.hooks[]?] | length" "$TEST_HOME7/.claude/settings.json")
-    [ "$before" = "$after" ] || fail_msg "#17: ${ev} hook count grew $before -> $after on --force re-merge"
+  before=$(jq "[.hooks.${ev}[]?.hooks[]?] | length" "$TEST_HOME7/.claude/settings.json")
+  bash "$REPO_DIR/scripts/install.sh" --force settings >/dev/null || fail_msg "#17: --force settings failed ($ev)"
+  after=$(jq "[.hooks.${ev}[]?.hooks[]?] | length" "$TEST_HOME7/.claude/settings.json")
+  [ "$before" = "$after" ] || fail_msg "#17: ${ev} hook count grew $before -> $after on --force re-merge"
 done
 export HOME="$HOME2_OLD"
 rm -rf "$TEST_HOME7"
@@ -200,7 +203,7 @@ rm -rf "$TEST_HOME7"
 TEST_HOME8=$(mktemp -d -t claude-defaults-stop.XXXXXX)
 export HOME="$TEST_HOME8"
 mkdir -p "$TEST_HOME8/.claude"
-cat > "$TEST_HOME8/.claude/settings.json" <<'PRE'
+cat >"$TEST_HOME8/.claude/settings.json" <<'PRE'
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "hooks": {
@@ -234,30 +237,30 @@ rm -rf "$TEST_HOME9"
 # installed symlink with an unwritable regular file at a path uninstall must
 # restore from backup; the restoring cp then fails.
 if [ "$(id -u)" -ne 0 ]; then
-    TEST_HOME10=$(mktemp -d -t claude-defaults-restorefail.XXXXXX)
-    export HOME="$TEST_HOME10"
-    mkdir -p "$TEST_HOME10/.claude"
-    # Pre-existing real file so install backs it up before symlinking.
-    echo "original statusline" > "$TEST_HOME10/.claude/statusline.sh"
-    bash "$REPO_DIR/scripts/install.sh" >/dev/null || fail_msg "#55: install failed"
-    # Swap the installed symlink for an unwritable file; uninstall's symlink
-    # sweep skips non-symlinks, so the restore step hits it and cp fails.
-    rm -f "$TEST_HOME10/.claude/statusline.sh"
-    echo "blocker" > "$TEST_HOME10/.claude/statusline.sh"
-    chmod 000 "$TEST_HOME10/.claude/statusline.sh"
-    if bash "$REPO_DIR/scripts/uninstall.sh" >/dev/null 2>&1; then
-        fail_msg "#55: uninstall exited 0 despite a failed restore"
-    fi
-    chmod 644 "$TEST_HOME10/.claude/statusline.sh" 2>/dev/null || true
-    export HOME="$HOME2_OLD"
-    rm -rf "$TEST_HOME10"
+  TEST_HOME10=$(mktemp -d -t claude-defaults-restorefail.XXXXXX)
+  export HOME="$TEST_HOME10"
+  mkdir -p "$TEST_HOME10/.claude"
+  # Pre-existing real file so install backs it up before symlinking.
+  echo "original statusline" >"$TEST_HOME10/.claude/statusline.sh"
+  bash "$REPO_DIR/scripts/install.sh" >/dev/null || fail_msg "#55: install failed"
+  # Swap the installed symlink for an unwritable file; uninstall's symlink
+  # sweep skips non-symlinks, so the restore step hits it and cp fails.
+  rm -f "$TEST_HOME10/.claude/statusline.sh"
+  echo "blocker" >"$TEST_HOME10/.claude/statusline.sh"
+  chmod 000 "$TEST_HOME10/.claude/statusline.sh"
+  if bash "$REPO_DIR/scripts/uninstall.sh" >/dev/null 2>&1; then
+    fail_msg "#55: uninstall exited 0 despite a failed restore"
+  fi
+  chmod 644 "$TEST_HOME10/.claude/statusline.sh" 2>/dev/null || true
+  export HOME="$HOME2_OLD"
+  rm -rf "$TEST_HOME10"
 else
-    echo "  SKIP #55 restore-failure test (running as root; mode 000 is bypassed)"
+  echo "  SKIP #55 restore-failure test (running as root; mode 000 is bypassed)"
 fi
 
 if [ "$fail" -eq 0 ]; then
-    echo "test-install: PASS"
+  echo "test-install: PASS"
 else
-    echo "test-install: $fail FAILURE(S)"
-    exit 1
+  echo "test-install: $fail FAILURE(S)"
+  exit 1
 fi

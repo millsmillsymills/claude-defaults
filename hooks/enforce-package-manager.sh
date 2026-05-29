@@ -20,16 +20,16 @@ NPM_RE='(^|&&|\|\||;|\||\(|\{)[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]+[
 
 # Detect if project uses pnpm (pnpm-lock.yaml in working directory)
 if [ -f "pnpm-lock.yaml" ]; then
-    if echo "$CMD" | grep -qE "$NPM_RE"; then
-        echo "BLOCKED: This project uses pnpm. Use 'pnpm' instead of 'npm'." >&2
-        exit 2
-    fi
+  if echo "$CMD" | grep -qE "$NPM_RE"; then
+    echo "BLOCKED: This project uses pnpm. Use 'pnpm' instead of 'npm'." >&2
+    exit 2
+  fi
 fi
 
 # Detect if project uses yarn (yarn.lock in working directory)
 if [ -f "yarn.lock" ]; then
-    if echo "$CMD" | grep -qE "$NPM_RE"; then
-        echo "BLOCKED: This project uses yarn. Use 'yarn' instead of 'npm'." >&2
-        exit 2
-    fi
+  if echo "$CMD" | grep -qE "$NPM_RE"; then
+    echo "BLOCKED: This project uses yarn. Use 'yarn' instead of 'npm'." >&2
+    exit 2
+  fi
 fi
