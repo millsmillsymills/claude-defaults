@@ -40,7 +40,7 @@ IFS=$'\t' read -r current_dir model_name cost lines_added lines_removed duration
                  ((.input_tokens // 0) + (.cache_read_input_tokens // 0))) | floor
             else 0 end
         ) catch 0)
-    ] | @tsv'
+    ] | @tsv' 2>/dev/null
 ) || true  # read returns non-zero at EOF (empty/invalid stdin); fallback handles it
 
 # Bash-level fallback: if jq crashed entirely, extract fields individually
@@ -88,6 +88,14 @@ progress_bar=""
 bar_width=12
 
 if [ -n "$ctx_used" ] && [ "$ctx_used" != "null" ]; then
+    # Clamp to [0,100]: remaining_percentage >100 makes 100-x negative,
+    # which would render a negative pct and a malformed bar.
+    if [ "$ctx_used" -lt 0 ]; then
+        ctx_used=0
+    elif [ "$ctx_used" -gt 100 ]; then
+        ctx_used=100
+    fi
+
     filled=$((ctx_used * bar_width / 100))
     empty=$((bar_width - filled))
 
