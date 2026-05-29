@@ -153,12 +153,12 @@ install_settings() {
     # re-merge). --force bypasses this check to support re-merging after
     # settings.json template changes.
     #
-    # Issue #15 (polish): narrow scope from the broad `.. | objects | .command?`
+    # Narrow scope from the broad `.. | objects | .command?`
     # walk to specific hook-event paths. The previous walk could false-positive
     # on any nested object with a `.command` field referencing a hook script
     # name (e.g. inside a comment field, or in an unrelated config section).
     #
-    # Issue #17: inspect the full canonical event set (shared via
+    # Inspect the full canonical event set (shared via
     # hook-events.sh), not just PreToolUse/PostToolUse/SessionEnd. A Stop-only
     # partial install was previously undetected, so a re-merge duplicated the
     # Stop hook. Match any repo hook-script basename under any event.

@@ -167,7 +167,7 @@ def main() -> int:
 
     mcp_server = _parse_mcp_server(tool)
     log_dir = Path.home() / ".claude" / "logs"
-    # Issue #10: filename uses UTC to match the ts field. Otherwise rows
+    # Filename uses UTC to match the ts field. Otherwise rows
     # written near local midnight land in a file dated for the previous
     # local day while the ts field is the next UTC day.
     log_file = str(log_dir / f"tool-calls-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.jsonl")
@@ -185,7 +185,7 @@ def main() -> int:
     if event == "pre":
         _maybe_rotate(log_dir, log_file)
         try:
-            # Issue #15 (polish): pair files are created 0o600 (owner-only).
+            # Pair files are created 0o600 (owner-only).
             # They contain timing + session metadata; no reason for other
             # local users to read them.
             fd = os.open(pair_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -253,7 +253,7 @@ def main() -> int:
     try:
         atomic_append(log_file, payload)
     except OSError as exc:
-        # Issue #8: explicit return 0 for ALL OSError variants (not just
+        # Explicit return 0 for ALL OSError variants (not just
         # ENOSPC). Logging must never break a tool call regardless of which
         # filesystem error fires (EACCES after a chown, EROFS after a
         # remount, etc.). The previous code only returned 0 inside the
