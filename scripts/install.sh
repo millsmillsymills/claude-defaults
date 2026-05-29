@@ -149,7 +149,7 @@ install_settings() {
             (.hooks.SessionEnd // [])[]?.hooks[]?.command
             | select(. != null)
         ' "$target" 2>/dev/null \
-            | grep -qE 'safety-block\.sh|safety-warn\.sh|log-tool-calls\.sh|log-rotate\.sh'; then
+            | grep -qE 'safety-block\.py|safety-warn\.sh|log-tool-calls\.sh|log-rotate\.sh'; then
             ok "$target (already merged with claude-defaults hooks — skipping)"
             return
         fi
@@ -272,9 +272,9 @@ install_commands() {
 install_hooks() {
     log "--- hooks ---"
     mkdir -p "${CLAUDE_DIR}/hooks/lib"
-    chmod +x "${REPO_DIR}"/hooks/*.sh 2>/dev/null || true
+    chmod +x "${REPO_DIR}"/hooks/*.sh "${REPO_DIR}"/hooks/*.py 2>/dev/null || true
     chmod +x "${REPO_DIR}"/hooks/lib/*.py 2>/dev/null || true
-    for hook in "${REPO_DIR}"/hooks/*.sh; do
+    for hook in "${REPO_DIR}"/hooks/*.sh "${REPO_DIR}"/hooks/*.py; do
         [ -f "$hook" ] || continue
         local name; name=$(basename "$hook")
         install_symlink "$hook" "${CLAUDE_DIR}/hooks/${name}" "hook: ${name}"

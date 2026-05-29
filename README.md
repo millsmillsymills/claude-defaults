@@ -342,7 +342,7 @@ claude-defaults/
 │   ├── block-rm-rf.sh              # legacy: block rm -rf (active)
 │   ├── block-push-main.sh          # legacy: block push to main (active)
 │   ├── enforce-package-manager.sh  # opt-in: enforce pnpm/yarn
-│   ├── safety-block.sh             # NEW: extended destructive-pattern blocks (active)
+│   ├── safety-block.py             # shlex-parsed destructive-command blocks (active)
 │   ├── safety-warn.sh              # NEW: warn on sensitive Edit/Write (active)
 │   ├── log-tool-calls.sh           # NEW: rich JSONL log of every tool call (active)
 │   ├── log-rotate.sh               # NEW: SessionEnd gzip+prune (active)

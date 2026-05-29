@@ -12,60 +12,14 @@ trap "rm -rf $TEST_HOME" EXIT
 export HOME="$TEST_HOME"
 mkdir -p "$TEST_HOME/.claude/logs"
 
-# === safety-block.sh ===
-echo "  testing safety-block.sh"
-bash hooks/safety-block.sh < tests/fixtures/tool-input-bash-safe.json
-[ $? -eq 0 ] || fail_msg "safety-block.sh blocked safe command"
-bash hooks/safety-block.sh < tests/fixtures/tool-input-bash-rmrf.json
-[ $? -eq 2 ] || fail_msg "safety-block.sh did not block rm -rf"
-
-# === safety-block.sh quote-strip tests (P1-7) ===
-echo "  testing safety-block.sh quote-strip"
-# Echo of dangerous patterns inside quotes should be ALLOWED (exit 0)
-quoted_safe_cases=(
-    'echo "rm -rf /tmp/test"'
-    "echo 'dd of=/dev/disk0 if=/dev/zero'"
-    'echo "this contains rm -rf /Users/foo as text"'
-    "printf '%s' 'mkfs.ext4 /dev/sdX'"
-)
-for cmd in "${quoted_safe_cases[@]}"; do
-    in=$(jq -nc --arg c "$cmd" '{tool_name:"Bash", tool_input:{command:$c}}')
-    echo "$in" | bash hooks/safety-block.sh
-    [ $? -eq 0 ] || fail_msg "safety-block.sh quote-strip: blocked safe-quoted '$cmd'"
-done
-# Real dangerous commands (not quoted) still BLOCKED
-real_danger_cases=(
-    'rm -rf /Users/somebody'
-    'sudo rm -rf /tmp'
-    'dd of=/dev/disk0 if=/dev/zero'
-)
-for cmd in "${real_danger_cases[@]}"; do
-    in=$(jq -nc --arg c "$cmd" '{tool_name:"Bash", tool_input:{command:$c}}')
-    echo "$in" | bash hooks/safety-block.sh
-    [ $? -eq 2 ] || fail_msg "safety-block.sh quote-strip: failed to block real '$cmd'"
-done
-
-# === safety-block.sh broader pattern tests (P1-6) ===
-echo "  testing safety-block.sh broader patterns"
-extra_block_cases=(
-    'sudo rm -rf /tmp/anything'
-    'dd of=/dev/disk0 if=/dev/zero'
-    'dd of=/dev/sda1 if=/dev/zero'
-    'dd of=/dev/nvme0n1 if=/dev/zero'
-    'mkfs.ext4 /dev/sda1'
-    'wipefs -a /dev/sda'
-    ':(){ :|:& };:'
-    'chmod -R 777 /'
-    'chmod -R 777 ~'
-    'git push --force origin main'
-    'git push -f origin master'
-    'git push --force-with-lease origin production'
-)
-for cmd in "${extra_block_cases[@]}"; do
-    in=$(jq -nc --arg c "$cmd" '{tool_name:"Bash", tool_input:{command:$c}}')
-    echo "$in" | bash hooks/safety-block.sh
-    [ $? -eq 2 ] || fail_msg "safety-block.sh: failed to block '$cmd'"
-done
+# === safety-block.py (fixture smoke test) ===
+# Full pattern/bypass coverage lives in test-guard-hooks.sh; here we only
+# confirm the wired hook runs on real fixtures and exits as expected.
+echo "  testing safety-block.py"
+hooks/safety-block.py < tests/fixtures/tool-input-bash-safe.json
+[ $? -eq 0 ] || fail_msg "safety-block.py blocked safe command"
+hooks/safety-block.py < tests/fixtures/tool-input-bash-rmrf.json
+[ $? -eq 2 ] || fail_msg "safety-block.py did not block rm -rf"
 
 # === safety-warn.sh ===
 echo "  testing safety-warn.sh"

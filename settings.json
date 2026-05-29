@@ -114,7 +114,7 @@
           },
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/safety-block.sh"
+            "command": "$HOME/.claude/hooks/safety-block.py"
           }
         ]
       },

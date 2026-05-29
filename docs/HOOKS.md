@@ -34,11 +34,11 @@ echo '{"tool_input":{"command":"rm -rf /tmp"}}' | bash hooks/block-rm-rf.sh
 
 ### `block-push-main.sh` (legacy, PreToolUse Bash)
 
-Blocks `git push <remote> main` or `git push <remote> master`. Does NOT cover force-push or production branches — that's `safety-block.sh`'s job.
+Blocks `git push <remote> main` or `git push <remote> master`. Does NOT cover force-push or production branches — that's `safety-block.py`'s job.
 
-### `safety-block.sh` (PreToolUse Bash, exit 2)
+### `safety-block.py` (PreToolUse Bash, exit 2)
 
-Hard-blocks broader destructive patterns:
+Parses the command with `shlex` and matches patterns against the tokens, so a payload hidden inside `bash -c '...'`, `sh -c '...'`, or `eval '...'` is unwrapped and checked too. Hard-blocks these destructive patterns:
 
 | Category | Pattern |
 |---|---|
@@ -49,9 +49,10 @@ Hard-blocks broader destructive patterns:
 | Partition ops | `fdisk -w`, `parted /dev/... mklabel/mkpart/rm/resizepart` |
 | Fork bomb | `:(){ :\|:& };:` |
 | chmod 777 | `chmod -R 777 /`, `chmod -R 777 ~` |
-| Force-push variants | `git push --force/-f/--force-with-lease ... main/master/production/prod` |
+| Force-push | `git push --force/-f/--force-with-lease` to main/master/production/prod, or with no branch named |
+| Wrapped payloads | any of the above inside `bash -c`/`sh -c`/`eval` |
 
-**Test:** `bash tests/test-hooks.sh` (covers 16 block + 9 allow cases)
+**Test:** `bash tests/test-guard-hooks.sh`
 
 ### `safety-warn.sh` (PreToolUse Edit\|Write, exit 0)
 
