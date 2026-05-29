@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -84,6 +85,68 @@ def _max_line_bytes() -> int:
         return DEFAULT_MAX_LINE
 
 
+# Default 100 MB, matching CLAUDE_LOG_ROTATE_BYTES in log-rotate.sh.
+_DEFAULT_ROTATE_BYTES = 104857600
+# Only stat + maybe rotate every Nth pre-call so the steady-state path stays
+# cheap; SessionEnd still rotates on exit, this only bounds long agent loops.
+_ROTATE_CHECK_EVERY = 100
+
+
+def _rotate_bytes() -> int:
+    try:
+        return int(os.environ.get("CLAUDE_LOG_ROTATE_BYTES", _DEFAULT_ROTATE_BYTES))
+    except ValueError:
+        return _DEFAULT_ROTATE_BYTES
+
+
+def _bump_counter(log_dir: Path) -> int:
+    """Increment and return a persistent pre-call counter.
+
+    Backed by a small file in the log dir so the modulo gate survives across
+    the one-shot hook invocations (each tool call is a fresh process).
+    """
+    counter_path = log_dir / ".rotate-counter"
+    try:
+        n = int(counter_path.read_text()) + 1
+    except (OSError, ValueError):
+        n = 1
+    try:
+        counter_path.write_text(str(n))
+    except OSError:
+        pass
+    return n
+
+
+def _maybe_rotate(log_dir: Path, log_file: str) -> None:
+    """Mid-session rotation: shell out to log-rotate.sh if today's log is big.
+
+    Gated to run at most once per `_ROTATE_CHECK_EVERY` pre-calls. Never raises:
+    rotation is best-effort and must not break a tool call.
+    """
+    try:
+        if _bump_counter(log_dir) % _ROTATE_CHECK_EVERY != 0:
+            return
+        try:
+            size = os.stat(log_file).st_size
+        except OSError:
+            return
+        if size < _rotate_bytes():
+            return
+        rotate_script = Path(os.path.dirname(os.path.realpath(__file__))).parent / "log-rotate.sh"
+        if not rotate_script.is_file():
+            return
+        subprocess.run(
+            ["bash", str(rotate_script)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=60,
+            check=False,
+        )
+    except Exception:
+        return
+
+
 def main() -> int:
     event = "pre"
     if len(sys.argv) >= 2 and sys.argv[1] in ("pre", "post"):
@@ -118,6 +181,7 @@ def main() -> int:
     call_id = _call_id()
 
     if event == "pre":
+        _maybe_rotate(log_dir, log_file)
         try:
             # Issue #15 (polish): pair files are created 0o600 (owner-only).
             # They contain timing + session metadata; no reason for other
