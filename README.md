@@ -229,6 +229,8 @@ Logging never breaks a tool call: write failures (disk full, missing dir, malfor
 
 A `Stop` hook of `type: "prompt"` (configured in `settings.json`) reviews Claude's final response with a fast model and forces continuation if Claude is rationalizing incomplete work ("out of scope," "pre-existing," "follow-up," etc.). Tune the prompt in `settings.json`'s `hooks.Stop[0].hooks[0].prompt` if it's too strict or too lax.
 
+**Privacy:** a `prompt`-type Stop hook transmits Claude's full response to the fast model unredacted (log redaction does not cover this channel). Low risk on a single-account local setup; see [Privacy implications](docs/HOOKS.md#privacy-implications) before using it under shared or multi-account deployments.
+
 ## Plugins and Skills
 
 Claude Code's capabilities come from plugins, which provide skills (reusable workflows), agents (specialized subagents), and commands (slash commands). Plugins are distributed through marketplaces.
