@@ -40,6 +40,28 @@ declare -a cases=(
     'Db_Password=hunter2value|***|hunter2value'
     # L4: named secret with a value shorter than 3 chars
     'secret=xy|secret=***|=xy'
+    # #3: Stripe secret keys (underscore form, distinct from OpenAI sk-)
+    'sk_live_4eC39HqLyjWDarjtT1zdp7dc|***STRIPE_KEY***|sk_live_4eC39HqLyjWDarjtT1zdp7dc'
+    'sk_test_4eC39HqLyjWDarjtT1zdp7dc|***STRIPE_KEY***|sk_test_4eC39HqLyjWDarjtT1zdp7dc'
+    # #3: Stripe false positive — too short / wrong shape, must be preserved
+    'sk_live_short|sk_live_short|***'
+    # #3: Twilio API key SID (SK + 32 lowercase hex)
+    'SKabcdef0123456789abcdef0123456789|***TWILIO_KEY***|SKabcdef0123456789abcdef0123456789'
+    # #3: Twilio API key SID false positive — uppercase hex letters, not [a-f0-9]
+    'SKABCDEF0123456789ABCDEF0123456789|SKABCDEF0123456789ABCDEF0123456789|***'
+    # #3: Twilio Account SID (AC + 32 lowercase hex)
+    'ACabcdef0123456789abcdef0123456789|***TWILIO_SID***|ACabcdef0123456789abcdef0123456789'
+    # #3: Twilio Account SID false positive — too short, must be preserved
+    'ACabcdef0123|ACabcdef0123|***'
+    # #3: SendGrid API keys (SG.<22>.<43>)
+    'SG.abcdefghijklmnopqrstuv.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ|***SENDGRID_KEY***|SG.abcdefghijklmnopqrstuv'
+    # #3: SendGrid false positive — wrong segment lengths, must be preserved
+    'SG.tooshort.alsotooshort|SG.tooshort.alsotooshort|***'
+    # #38: Slack refresh (xoxe-) and app-level (xapp-) tokens
+    'xoxe-1-abcdefghijklmnopqrst|***SLACK_TOKEN***|xoxe-1-abcdefghij'
+    'xapp-1-A012345678-9876543210-abcdef|***SLACK_APP_TOKEN***|xapp-1-A012345678'
+    # #38: key-aware over-match — value patterns still fire on real secrets
+    'aws_secret_access_key=wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY|aws_secret_access_key=***|wJalrXUtnFEMI'
 )
 
 for c in "${cases[@]}"; do
@@ -121,6 +143,49 @@ echo "$keyed_out" | jq -e '.env.API_KEY=="***"' >/dev/null \
     || fail_msg "key-aware: nested API_KEY value not redacted: $keyed_out"
 echo "$keyed_out" | jq -e '.note=="hello world"' >/dev/null \
     || fail_msg "key-aware: benign key clobbered: $keyed_out"
+
+# #38: key-aware match anchored to the key suffix — keys merely CONTAINING a
+# secret word (analytics telemetry) must keep their values; trailing-segment
+# secret keys must still be redacted.
+anchored='{"csrf_token_count":5,"bearer_count":3,"last_authorization_at":"2026-01-01","aws_secret_access_key":"wJalrXUtnFEMI"}'
+anchored_out=$(echo "$anchored" | python3 hooks/lib/redact.py)
+echo "$anchored_out" | jq -e '.csrf_token_count==5' >/dev/null \
+    || fail_msg "#38: csrf_token_count over-matched: $anchored_out"
+echo "$anchored_out" | jq -e '.bearer_count==3' >/dev/null \
+    || fail_msg "#38: bearer_count over-matched: $anchored_out"
+echo "$anchored_out" | jq -e '.last_authorization_at=="2026-01-01"' >/dev/null \
+    || fail_msg "#38: last_authorization_at over-matched: $anchored_out"
+echo "$anchored_out" | jq -e '.aws_secret_access_key=="***"' >/dev/null \
+    || fail_msg "#38: aws_secret_access_key value not redacted: $anchored_out"
+
+# #50: camelCase secret keys end in the secret word with no `_`/`-` separator.
+# The suffix anchor must still catch them, or AWS/OAuth/Stripe SDK payloads
+# (secretAccessKey, accessToken, refreshToken, clientSecret, ...) leak verbatim.
+camel='{"secretAccessKey":"wJalrXUtnFEMI","accessToken":"ya29.AAAA","refreshToken":"1//abcdef","clientSecret":"cs_live_x","sessionToken":"st_x","bearerToken":"bt_x","authToken":"at_x"}'
+camel_out=$(echo "$camel" | python3 hooks/lib/redact.py)
+for k in secretAccessKey accessToken refreshToken clientSecret sessionToken bearerToken authToken; do
+    echo "$camel_out" | jq -e --arg k "$k" '.[$k]=="***"' >/dev/null \
+        || fail_msg "#50: camelCase secret key $k not redacted: $camel_out"
+done
+# camelCase analytics keys ending in a non-secret word must survive.
+camel_neg='{"accessTokenCount":7,"lastAuthorizationAt":"2026-01-01","tokenizer":"gpt"}'
+camel_neg_out=$(echo "$camel_neg" | python3 hooks/lib/redact.py)
+echo "$camel_neg_out" | jq -e '.accessTokenCount==7' >/dev/null \
+    || fail_msg "#50: accessTokenCount over-matched: $camel_neg_out"
+echo "$camel_neg_out" | jq -e '.lastAuthorizationAt=="2026-01-01"' >/dev/null \
+    || fail_msg "#50: lastAuthorizationAt over-matched: $camel_neg_out"
+echo "$camel_neg_out" | jq -e '.tokenizer=="gpt"' >/dev/null \
+    || fail_msg "#50: tokenizer over-matched: $camel_neg_out"
+
+# #3: GCP service-account private keys are PEM blocks — covered by the existing
+# DOTALL PRIVATE KEY pattern, no dedicated pattern needed.
+gcp_pem=$(printf -- '-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqGCPserviceacct\n-----END PRIVATE KEY-----')
+gcp_out=$(jq -nc --arg v "$gcp_pem" '{value:$v}' | python3 hooks/lib/redact.py | jq -r '.value')
+echo "$gcp_out" | grep -qF '***PRIVATE_KEY***' \
+    || fail_msg "#3: GCP PEM key not redacted: $gcp_out"
+if echo "$gcp_out" | grep -qF 'MIIEvgIBADANBgkqGCPserviceacct'; then
+    fail_msg "#3: GCP PEM key body leaked: $gcp_out"
+fi
 
 # L7: invalid JSON must fail fast (exit 1, actionable message).
 err=$(printf 'not-json{' | python3 hooks/lib/redact.py 2>&1 >/dev/null)

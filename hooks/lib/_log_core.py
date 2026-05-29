@@ -57,8 +57,20 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bgh[opsu]_[A-Za-z0-9]{36,}\b"), "***GH_TOKEN***"),
     # GitHub fine-grained PATs (different prefix than gh[opsu]_)
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{30,}\b"), "***GH_PAT***"),
-    # Slack tokens (bot/user/workspace/refresh/app: xoxb-, xoxp-, xoxa-, xoxr-, xoxs-)
-    (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), "***SLACK_TOKEN***"),
+    # Slack tokens (bot/user/workspace/refresh/admin/legacy-refresh:
+    # xoxb-, xoxp-, xoxa-, xoxr-, xoxs-, xoxe-)
+    (re.compile(r"\bxox[baprse]-[A-Za-z0-9-]{10,}\b"), "***SLACK_TOKEN***"),
+    # Slack app-level tokens (xapp-1-...)
+    (re.compile(r"\bxapp-1-[A-Za-z0-9-]{10,}\b"), "***SLACK_APP_TOKEN***"),
+    # Stripe secret keys (sk_live_/sk_test_; underscore form, distinct from sk-)
+    (re.compile(r"\bsk_(?:live|test)_[A-Za-z0-9]{16,}\b"), "***STRIPE_KEY***"),
+    # Twilio API key SID (SK + 32 hex)
+    (re.compile(r"\bSK[a-f0-9]{32}\b"), "***TWILIO_KEY***"),
+    # Twilio Account SID (AC + 32 hex)
+    (re.compile(r"\bAC[a-f0-9]{32}\b"), "***TWILIO_SID***"),
+    # SendGrid API keys (SG.<22>.<43>)
+    (re.compile(r"\bSG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}\b"),
+     "***SENDGRID_KEY***"),
     # Anthropic API keys
     (re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{8,}\b"), "***ANTHROPIC_KEY***"),
     # OpenAI keys -- legacy (sk-...) and modern project/service/admin keys
@@ -119,9 +131,16 @@ def redact_string(s: str) -> str:
 # string patterns above only fire on `key=value` text; structured payloads
 # (MCP args, env maps, config objects) carry the secret as a bare JSON value
 # under a sensitive key, so the key itself is the signal.
+#
+# The key must END with a secret word (matched with `.fullmatch`). The end
+# anchor is what protects analytics telemetry -- `csrf_token_count`,
+# `bearer_count`, `last_authorization_at` end in a non-secret word, so they do
+# not match. The prefix is permissive (`.*`, any separator or camelCase hump)
+# so camelCase keys are caught too: `secretAccessKey`, `accessToken`,
+# `refreshToken`, `clientSecret`, `sessionToken`, `bearerToken`, `authToken`.
 _SECRET_KEY_RE = re.compile(
-    r"(?i)(?:password|passwd|secret|token|api[_-]?key|access[_-]?key"
-    r"|private[_-]?key|authorization|bearer|credentials?)"
+    r"(?i)^.*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key"
+    r"|private[_-]?key|secret[_-]?key|authorization|bearer|credentials?)$"
 )
 
 
@@ -141,7 +160,7 @@ def redact_value(v: object) -> object:
         return [redact_value(x) for x in v]
     if isinstance(v, dict):
         return {
-            k: "***" if isinstance(k, str) and _SECRET_KEY_RE.search(k)
+            k: "***" if isinstance(k, str) and _SECRET_KEY_RE.fullmatch(k)
             else redact_value(val)
             for k, val in v.items()
         }
@@ -157,8 +176,12 @@ DEFAULT_MAX_LINE = 1024 * 1024  # 1 MB
 def truncate_output(obj: dict, max_bytes: int) -> dict:
     """If serialized JSON would exceed `max_bytes`, trim output.{stdout,stderr}.
 
-    Mutates and returns `obj` for convenience. Adds an `output._truncated_bytes`
-    marker if anything was dropped.
+    Mutates and returns `obj` for convenience. Records the number of dropped
+    bytes in `output._truncated_bytes` when anything was dropped. When the
+    non-trimmable envelope (call_id, ts, args, ...) alone exceeds `max_bytes`,
+    stdout/stderr are dropped entirely and `output._truncated_oversize` is set
+    true: the line is still emitted over the cap, because nothing left here is
+    trimmable. The marker therefore never implies a cap that wasn't met.
     """
     serialized = json.dumps(obj, ensure_ascii=False)
     overhead = len((serialized + "\n").encode("utf-8")) - max_bytes
@@ -190,6 +213,33 @@ def truncate_output(obj: dict, max_bytes: int) -> dict:
 
     if truncated_total > 0:
         output["_truncated_bytes"] = truncated_total
+
+    # The per-field loop respects a 256-byte floor and skips fields already at
+    # or under it, so a payload whose envelope plus two short fields still
+    # exceeds max_bytes would otherwise be written oversize. Hard-truncate
+    # below the floor (stdout first, since it is usually larger). The 64-byte
+    # margin leaves room for the marker.
+    for key in ("stdout", "stderr"):
+        serialized = json.dumps(obj, ensure_ascii=False)
+        overhead = len((serialized + "\n").encode("utf-8")) - max_bytes
+        if overhead <= 0:
+            break
+        v = output.get(key)
+        if not isinstance(v, str):
+            continue
+        encoded = v.encode("utf-8")
+        keep = max(0, len(encoded) - overhead - 64)
+        if keep >= len(encoded):
+            continue
+        output[key] = encoded[:keep].decode("utf-8", errors="replace")
+        output["_truncated_bytes"] = output.get("_truncated_bytes", 0) + (len(encoded) - keep)
+
+    # If even empty stdout/stderr cannot bring the line under max_bytes, the
+    # envelope alone exceeds the cap. Flag it honestly rather than letting
+    # _truncated_bytes imply the per-line cap was met.
+    serialized = json.dumps(obj, ensure_ascii=False)
+    if len((serialized + "\n").encode("utf-8")) > max_bytes:
+        output["_truncated_oversize"] = True
 
     return obj
 

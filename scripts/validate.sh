@@ -11,6 +11,10 @@ REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CLAUDE_DIR="${HOME}/.claude"
 errors=0
 
+# shellcheck source=scripts/hook-events.sh
+. "$(dirname "$0")/hook-events.sh"
+hook_events_load
+
 pass() { printf "  \033[32mOK\033[0m  %s\n" "$1"; }
 fail() { printf "  \033[31mFAIL\033[0m  %s\n" "$1"; ((errors++)) || true; }
 warn() { printf "  \033[33mWARN\033[0m  %s\n" "$1"; }
@@ -36,16 +40,17 @@ elif [ -f "${CLAUDE_DIR}/settings.json" ]; then
     else
         fail "settings.json is invalid JSON"
     fi
-    # Hooks wired: pull commands only from the canonical hook events and require
-    # each to appear as a hooks/<name>.sh path -- not merely as a substring
-    # anywhere in the file (the old `.. | objects | .command` walk would pass
-    # on a stray reference in any unrelated section).
+    # Hooks wired: pull commands only from the canonical hook events (shared
+    # with install.sh via hook-events.sh) and require each to appear as a
+    # hooks/<name>.sh path -- not merely as a substring anywhere in the file
+    # (the old `.. | objects | .command` walk would pass on a stray reference
+    # in any unrelated section). Iterating the full event set means a hook
+    # wired only under Stop/UserPromptSubmit is no longer invisible.
     wired=$(jq -r '
-        (.hooks.PreToolUse // [])[]?.hooks[]?.command,
-        (.hooks.PostToolUse // [])[]?.hooks[]?.command,
-        (.hooks.SessionEnd // [])[]?.hooks[]?.command
-        | select(. != null)
-    ' "${CLAUDE_DIR}/settings.json" 2>/dev/null)
+        ($ARGS.positional) as $events |
+        [ $events[] as $e | (.hooks[$e] // [])[]?.hooks[]?.command ]
+        | .[] | select(. != null)
+    ' --args "${HOOK_EVENTS[@]}" < "${CLAUDE_DIR}/settings.json" 2>/dev/null)
     for hook_name in safety-block safety-warn log-tool-calls log-rotate; do
         if echo "$wired" | grep -qE "hooks/${hook_name}\.(sh|py)($|[[:space:]])"; then
             pass "settings.json wires ${hook_name}"

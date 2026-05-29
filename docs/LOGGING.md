@@ -51,9 +51,10 @@ One JSON object per line. Two row types: `pre` (written before the tool runs) an
 | `mcp_server` | string \| null | parsed from `mcp__<server>__<method>` tool names |
 | `args` | object | full `tool_input`, redacted |
 | `exit_status` | int | post only |
-| `duration_ms` | int | post only; pre/post call_id match |
+| `duration_ms` | int \| null | post only; `null` when the pre pair file was absent (e.g. concurrent calls) -- duration is unknown, not zero |
 | `output` | object | post only; full `tool_response`, redacted, capped at 1 MB |
-| `output._truncated_bytes` | int | present on post rows where output exceeded the cap |
+| `output._truncated_bytes` | int | present on post rows where output exceeded the cap; counts bytes dropped from stdout/stderr |
+| `output._truncated_oversize` | bool | present (true) when the non-trimmable envelope alone exceeds the cap, so the line is emitted over the cap despite emptying stdout/stderr |
 
 ## Redaction
 
@@ -62,10 +63,17 @@ Patterns auto-stripped before write (source of truth: `hooks/lib/_log_core.py` `
 | Pattern | Replacement |
 |---|---|
 | JWT tokens | `***JWT***` |
+| PEM private key blocks (any type, incl. GCP service-account keys) | `***PRIVATE_KEY***` |
 | AWS access keys (`AKIA...`) | `***AWS_KEY***` |
 | AWS STS keys (`ASIA...`) | `***AWS_STS_KEY***` |
 | GitHub tokens (`ghp_/gho_/ghs_/ghu_`) | `***GH_TOKEN***` |
 | GitHub fine-grained PATs (`github_pat_...`) | `***GH_PAT***` |
+| Slack tokens (`xoxb-/xoxp-/xoxa-/xoxr-/xoxs-/xoxe-`) | `***SLACK_TOKEN***` |
+| Slack app-level tokens (`xapp-1-...`) | `***SLACK_APP_TOKEN***` |
+| Stripe secret keys (`sk_live_/sk_test_...`) | `***STRIPE_KEY***` |
+| Twilio API key SID (`SK<32 hex>`) | `***TWILIO_KEY***` |
+| Twilio Account SID (`AC<32 hex>`) | `***TWILIO_SID***` |
+| SendGrid keys (`SG.<22>.<43>`) | `***SENDGRID_KEY***` |
 | Anthropic keys (`sk-ant-...`) | `***ANTHROPIC_KEY***` |
 | OpenAI keys (`sk-...`) | `***OPENAI_KEY***` |
 | URL userinfo passwords (`user:pass@host`) | `user:***@host` |
@@ -74,7 +82,7 @@ Patterns auto-stripped before write (source of truth: `hooks/lib/_log_core.py` `
 
 This table is a summary; `_log_core.py` is the full, authoritative set.
 
-If you need to add a pattern, edit `hooks/lib/_log_core.py`'s `_PATTERNS` list — it's the single source of truth, imported by all three callers (`redact.py` CLI, `jsonl_write.py` CLI, and the live `log_tool_call.py` logging pipeline). Add a case to `tests/test-redaction.sh`. To re-redact older logs after adding a pattern, run `python3 scripts/redact-existing-logs.py <log-file>` (one-off; not auto-installed).
+If you need to add a pattern, edit `hooks/lib/_log_core.py`'s `_PATTERNS` list — it's the single source of truth, imported by all three callers (`redact.py` CLI, `jsonl_write.py` CLI, and the live `log_tool_call.py` logging pipeline). Add a case to `tests/test-redaction.sh`. To re-redact older logs after adding a pattern, run `python3 scripts/redact-existing-logs.py <log-file>` (one-off; not auto-installed). It rewrites each file via `os.replace`, so run it only against rotated/inactive logs or when no Claude session is active — a live logger appending to the old inode would lose those writes.
 
 ## Rotation policy
 
@@ -132,6 +140,6 @@ jq -r 'select(.event=="pre" and (.tool=="Edit" or .tool=="Write")) | .args.file_
 ## Atomicity & failure modes
 
 - Writes use a single `O_APPEND` syscall (via the helpers in `hooks/lib/_log_core.py`, exposed by both `hooks/lib/jsonl_write.py` and `hooks/lib/log_tool_call.py`). Atomic on macOS APFS for line sizes ≤ 1 MB (the truncation cap).
-- Lines exceeding 1 MB get `output.stdout`/`output.stderr` truncated with `_truncated_bytes` marker.
+- Lines exceeding 1 MB get `output.stdout`/`output.stderr` truncated with a `_truncated_bytes` marker. If the envelope (call_id, ts, args, ...) alone exceeds the cap, both fields are emptied and `_truncated_oversize` is set true -- the line is still emitted over the cap, since nothing trimmable remains.
 - `ENOSPC` (disk full) silently drops the line; never breaks the user's tool call.
 - All write errors wrapped in `|| true` from the bash side. Logging cannot break Claude Code.
