@@ -99,6 +99,30 @@ got=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command // ""' "$TEST_HOME2/.claude/s
 export HOME="$HOME2_OLD"
 rm -rf "$TEST_HOME2"
 
+# P1-2b: a user hook under an event the template does NOT define must survive
+# the merge untouched (the merge is per-event; only ours-named groups under
+# template events are replaced).
+TEST_HOME2B=$(mktemp -d -t claude-defaults-userevent.XXXXXX)
+export HOME="$TEST_HOME2B"
+mkdir -p "$TEST_HOME2B/.claude"
+cat >"$TEST_HOME2B/.claude/settings.json" <<'PRE'
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "echo USER-ONLY-EVENT-HOOK"}]}
+    ]
+  }
+}
+PRE
+bash "$REPO_DIR/scripts/install.sh" settings >/dev/null || fail_msg "P1-2b: install failed"
+got=$(jq -r '.hooks.UserPromptSubmit[]?.hooks[]?.command // ""' "$TEST_HOME2B/.claude/settings.json" | grep -c 'USER-ONLY-EVENT-HOOK')
+[ "$got" -ge 1 ] || fail_msg "P1-2b: user-only-event hook lost in merge (count=$got)"
+got=$(jq -r '.hooks.PreToolUse[]?.hooks[]?.command // ""' "$TEST_HOME2B/.claude/settings.json" | grep -c 'safety-block.py')
+[ "$got" -ge 1 ] || fail_msg "P1-2b: template hooks missing after merge (count=$got)"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME2B"
+
 # H8: re-running with --force must not duplicate hook blocks.
 TEST_HOME3=$(mktemp -d -t claude-defaults-force.XXXXXX)
 export HOME="$TEST_HOME3"

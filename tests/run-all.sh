@@ -10,6 +10,7 @@ TESTS=(
   tests/test-truncate.sh
   tests/test-hooks.sh
   tests/test-guard-hooks.sh
+  tests/test-hook-resilience.sh
   tests/test-install.sh
   tests/test-statusline.sh
 )
