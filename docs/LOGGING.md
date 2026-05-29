@@ -63,10 +63,17 @@ Patterns auto-stripped before write (source of truth: `hooks/lib/_log_core.py` `
 | Pattern | Replacement |
 |---|---|
 | JWT tokens | `***JWT***` |
+| PEM private key blocks (any type, incl. GCP service-account keys) | `***PRIVATE_KEY***` |
 | AWS access keys (`AKIA...`) | `***AWS_KEY***` |
 | AWS STS keys (`ASIA...`) | `***AWS_STS_KEY***` |
 | GitHub tokens (`ghp_/gho_/ghs_/ghu_`) | `***GH_TOKEN***` |
 | GitHub fine-grained PATs (`github_pat_...`) | `***GH_PAT***` |
+| Slack tokens (`xoxb-/xoxp-/xoxa-/xoxr-/xoxs-/xoxe-`) | `***SLACK_TOKEN***` |
+| Slack app-level tokens (`xapp-1-...`) | `***SLACK_APP_TOKEN***` |
+| Stripe secret keys (`sk_live_/sk_test_...`) | `***STRIPE_KEY***` |
+| Twilio API key SID (`SK<32 hex>`) | `***TWILIO_KEY***` |
+| Twilio Account SID (`AC<32 hex>`) | `***TWILIO_SID***` |
+| SendGrid keys (`SG.<22>.<43>`) | `***SENDGRID_KEY***` |
 | Anthropic keys (`sk-ant-...`) | `***ANTHROPIC_KEY***` |
 | OpenAI keys (`sk-...`) | `***OPENAI_KEY***` |
 | URL userinfo passwords (`user:pass@host`) | `user:***@host` |
