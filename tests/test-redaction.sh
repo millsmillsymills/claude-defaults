@@ -158,6 +158,25 @@ echo "$anchored_out" | jq -e '.last_authorization_at=="2026-01-01"' >/dev/null \
 echo "$anchored_out" | jq -e '.aws_secret_access_key=="***"' >/dev/null \
     || fail_msg "#38: aws_secret_access_key value not redacted: $anchored_out"
 
+# #50: camelCase secret keys end in the secret word with no `_`/`-` separator.
+# The suffix anchor must still catch them, or AWS/OAuth/Stripe SDK payloads
+# (secretAccessKey, accessToken, refreshToken, clientSecret, ...) leak verbatim.
+camel='{"secretAccessKey":"wJalrXUtnFEMI","accessToken":"ya29.AAAA","refreshToken":"1//abcdef","clientSecret":"cs_live_x","sessionToken":"st_x","bearerToken":"bt_x","authToken":"at_x"}'
+camel_out=$(echo "$camel" | python3 hooks/lib/redact.py)
+for k in secretAccessKey accessToken refreshToken clientSecret sessionToken bearerToken authToken; do
+    echo "$camel_out" | jq -e --arg k "$k" '.[$k]=="***"' >/dev/null \
+        || fail_msg "#50: camelCase secret key $k not redacted: $camel_out"
+done
+# camelCase analytics keys ending in a non-secret word must survive.
+camel_neg='{"accessTokenCount":7,"lastAuthorizationAt":"2026-01-01","tokenizer":"gpt"}'
+camel_neg_out=$(echo "$camel_neg" | python3 hooks/lib/redact.py)
+echo "$camel_neg_out" | jq -e '.accessTokenCount==7' >/dev/null \
+    || fail_msg "#50: accessTokenCount over-matched: $camel_neg_out"
+echo "$camel_neg_out" | jq -e '.lastAuthorizationAt=="2026-01-01"' >/dev/null \
+    || fail_msg "#50: lastAuthorizationAt over-matched: $camel_neg_out"
+echo "$camel_neg_out" | jq -e '.tokenizer=="gpt"' >/dev/null \
+    || fail_msg "#50: tokenizer over-matched: $camel_neg_out"
+
 # #3: GCP service-account private keys are PEM blocks — covered by the existing
 # DOTALL PRIVATE KEY pattern, no dedicated pattern needed.
 gcp_pem=$(printf -- '-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqGCPserviceacct\n-----END PRIVATE KEY-----')

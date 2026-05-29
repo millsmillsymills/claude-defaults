@@ -132,11 +132,14 @@ def redact_string(s: str) -> str:
 # (MCP args, env maps, config objects) carry the secret as a bare JSON value
 # under a sensitive key, so the key itself is the signal.
 #
-# Anchored to the END of the key (whole key or trailing `_`/`-` segment) and
-# matched with `.fullmatch`: a substring `.search` clobbers analytics telemetry
-# like `csrf_token_count`, `bearer_count`, or `last_authorization_at`.
+# The key must END with a secret word (matched with `.fullmatch`). The end
+# anchor is what protects analytics telemetry -- `csrf_token_count`,
+# `bearer_count`, `last_authorization_at` end in a non-secret word, so they do
+# not match. The prefix is permissive (`.*`, any separator or camelCase hump)
+# so camelCase keys are caught too: `secretAccessKey`, `accessToken`,
+# `refreshToken`, `clientSecret`, `sessionToken`, `bearerToken`, `authToken`.
 _SECRET_KEY_RE = re.compile(
-    r"(?i)^(?:.*[_-])?(?:password|passwd|secret|token|api[_-]?key|access[_-]?key"
+    r"(?i)^.*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key"
     r"|private[_-]?key|secret[_-]?key|authorization|bearer|credentials?)$"
 )
 
