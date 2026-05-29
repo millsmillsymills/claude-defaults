@@ -112,21 +112,31 @@
     ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/run-hook.sh session-heal.sh"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/block-rm-rf.sh"
+            "command": "$HOME/.claude/hooks/run-hook.sh block-rm-rf.sh"
           },
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/block-push-main.sh"
+            "command": "$HOME/.claude/hooks/run-hook.sh block-push-main.sh"
           },
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/safety-block.py"
+            "command": "$HOME/.claude/hooks/run-hook.sh safety-block.py"
           }
         ]
       },
@@ -135,7 +145,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/safety-warn.sh"
+            "command": "$HOME/.claude/hooks/run-hook.sh safety-warn.sh"
           }
         ]
       },
@@ -144,7 +154,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/log-tool-calls.sh pre"
+            "command": "$HOME/.claude/hooks/run-hook.sh log-tool-calls.sh pre"
           }
         ]
       }
@@ -155,7 +165,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/log-tool-calls.sh post"
+            "command": "$HOME/.claude/hooks/run-hook.sh log-tool-calls.sh post"
           }
         ]
       }
@@ -175,7 +185,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/log-rotate.sh"
+            "command": "$HOME/.claude/hooks/run-hook.sh log-rotate.sh"
           }
         ]
       }

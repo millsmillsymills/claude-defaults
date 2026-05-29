@@ -2,6 +2,16 @@
 
 Every hook installed by claude-defaults, what it does, and how to test it. The hooks live at `hooks/*.sh` in this repo and are symlinked into `~/.claude/hooks/` by `scripts/install.sh`.
 
+## Missing-hook safety net
+
+Every command-type hook in `settings.json` is invoked through `run-hook.sh <name> [args]` rather than referencing the script directly. This wrapper plus a `doctor.sh` self-heal step make a missing directory or a renamed/removed hook a non-event instead of a `/bin/sh: ...: No such file or directory` failure.
+
+- **`run-hook.sh` (runtime, in every hook command).** Ensures `logs/` and `hooks/lib/` exist, resolves its own symlink back to the repo so it can run the real script even if `~/.claude/hooks/<name>` is missing (and recreates that symlink opportunistically). If the hook genuinely can't be found, it warns on stderr and exits 0 — fails OPEN so infrastructure breakage never blocks a tool call. A real hook's own exit code (including 2 to block) is propagated unchanged.
+- **`session-heal.sh` (SessionStart).** Runs `doctor.sh --quick` silently at session start: prunes dangling symlinks and recreates missing links/dirs so the rest of the session is clean.
+- **`scripts/doctor.sh` (manual or via SessionStart).** `--quick` does symlink/dir repair only; the default also re-merges `settings.json` from the template (collapsing any duplicated hook groups and picking up renamed hooks). Idempotent. Run it after renaming or removing a hook.
+
+Hook **content** can't be regenerated — symlinks point into this repo, so if a repo script is deleted the wrapper degrades to a logged skip rather than an error. Re-add the script and run `scripts/doctor.sh`.
+
 ## Hook events (Claude Code)
 
 | Event | When it fires | Can block? |
@@ -96,6 +106,15 @@ Low severity for a single-account local setup (primary and fast model share one 
 1. Create `hooks/<name>.sh` (or `.py`)
 2. Make it executable: `chmod +x hooks/<name>.sh`
 3. Re-run `./scripts/install.sh hooks` (creates the symlink at `~/.claude/hooks/<name>.sh`)
-4. Reference it in `settings.json` under the appropriate event/matcher
+4. Reference it in `settings.json` via the wrapper: `"$HOME/.claude/hooks/run-hook.sh <name>.sh [args]"`
 5. Re-run `./scripts/install.sh settings` to merge the updated hooks block
 6. Restart any active Claude Code session for the new hook to fire
+
+## Renaming or removing a hook
+
+Because the live `settings.json` and the `~/.claude/hooks/` symlinks are derived from this repo, a rename leaves a stale symlink behind. After renaming/removing a hook in the repo:
+
+1. Update the template `settings.json` reference (the wrapper arg).
+2. Run `./scripts/doctor.sh` — it prunes the now-dangling symlink and re-merges `settings.json`.
+
+Until you do, `run-hook.sh` and the SessionStart self-heal keep the old name from erroring (logged skip / auto-prune).

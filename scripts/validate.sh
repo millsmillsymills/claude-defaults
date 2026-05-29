@@ -55,7 +55,9 @@ elif [ -f "${CLAUDE_DIR}/settings.json" ]; then
         | .[] | select(. != null)
     ' --args "${HOOK_EVENTS[@]}" <"${CLAUDE_DIR}/settings.json" 2>/dev/null)
   for hook_name in safety-block safety-warn log-tool-calls log-rotate; do
-    if echo "$wired" | grep -qE "hooks/${hook_name}\.(sh|py)($|[[:space:]])"; then
+    # Match both direct paths (hooks/<name>.sh) and the run-hook.sh wrapper form
+    # (run-hook.sh <name>.sh), where the hook name appears as an argument.
+    if echo "$wired" | grep -qE "${hook_name}\.(sh|py)($|[[:space:]])"; then
       pass "settings.json wires ${hook_name}"
     else
       fail "settings.json does NOT wire ${hook_name} under a hook event"

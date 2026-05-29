@@ -204,6 +204,10 @@ install_settings() {
     existing="${BACKUP_DIR}/$(basename "$target")"
   fi
 
+  # Hook events are template-authoritative: for any event the template defines,
+  # the template's array replaces the existing one wholesale, and events only
+  # the user has are preserved. Concatenating instead (the previous behavior)
+  # duplicated hook groups on every re-merge and stranded renamed hooks.
   if [ -n "$existing" ] && command -v jq >/dev/null 2>&1; then
     jq -s '
             .[0] as $existing | .[1] as $new |
@@ -220,7 +224,7 @@ install_settings() {
                 ($existing.hooks // {}) as $eh |
                 ($new.hooks // {}) as $nh |
                 reduce ((($eh | keys) + ($nh | keys)) | unique[]) as $event ({};
-                    .[$event] = (($eh[$event] // []) + ($nh[$event] // []) | unique)
+                    .[$event] = ($nh[$event] // $eh[$event])
                 )
             )
         ' "$existing" "${REPO_DIR}/settings.json" >"${target}.tmp"
