@@ -19,7 +19,6 @@ Compatible with Python 3.9+ (relies on PEP 563 deferred annotations).
 """
 from __future__ import annotations
 
-import errno
 import hashlib
 import json
 import os
