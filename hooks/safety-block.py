@@ -6,10 +6,13 @@ payload tucked inside ``bash -c '...'``, ``sh -c '...'`` or ``eval '...'`` is
 unwrapped and checked too -- the previous shell implementation stripped quoted
 strings before matching, which let any of those wrappers bypass every pattern.
 
-Exit 2 with an explanation blocks the call; exit 0 allows it. Any unexpected
-internal error exits 0 (fail-open): a parser edge case must never wedge the
-session, and ``permissions.deny`` in settings.json is the hard backstop for the
-``rm -rf`` / ``sudo`` classes regardless of what this hook does.
+Exit 2 with an explanation blocks the call; exit 0 allows it. The hook fails
+open -- malformed input or a scan crash exits 0 so a parser edge case never
+wedges the session, and ``permissions.deny`` in settings.json is the hard
+backstop for the ``rm -rf`` / ``sudo`` classes. But a *scan* crash means a
+guard ran on a real command and let it through unchecked, so that case is
+logged loudly to ``logs/hook-errors.log`` and stderr (mirroring run-hook.sh) --
+a never-enforced security matcher must not fail silently.
 """
 from __future__ import annotations
 
@@ -17,6 +20,8 @@ import json
 import re
 import shlex
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
 _OPERATORS = {"&&", "||", ";", "|", "&", "\n"}
 _SHELL_WRAPPERS = {"bash", "sh", "zsh", "dash", "ksh"}
@@ -245,17 +250,35 @@ def scan(cmd: str, depth: int = 0) -> str | None:
     return None
 
 
+def _log_scan_error(exc: BaseException) -> None:
+    """Record a scan crash to a durable log and stderr before failing open."""
+    print(
+        "WARNING: safety-block.py scan crashed; destructive-command guard NOT "
+        f"enforced and the command was ALLOWED unchecked ({exc!r}).",
+        file=sys.stderr,
+    )
+    try:
+        log_dir = Path.home() / ".claude" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with (log_dir / "hook-errors.log").open("a", encoding="utf-8") as fh:
+            fh.write(f"{stamp} safety-block.py scan-error: {exc!r}\n")
+    except OSError:
+        pass  # logging must never override the fail-open contract
+
+
 def main() -> int:
     try:
         data = json.load(sys.stdin)
-        cmd = data.get("tool_input", {}).get("command", "")
-        if not isinstance(cmd, str) or not cmd:
-            return 0
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return 0  # malformed input: nothing to scan, fail open quietly
+    cmd = data.get("tool_input", {}).get("command", "") if isinstance(data, dict) else ""
+    if not isinstance(cmd, str) or not cmd:
+        return 0
+    try:
         reason = scan(cmd)
-    except Exception:  # noqa: BLE001 -- documented fail-open contract below
-        # Any parse/IO/edge-case error exits 0: this hook must never wedge the
-        # session, and permissions.deny is the hard backstop for rm -rf / sudo.
-        # A non-string command, malformed JSON, or a scan crash all land here.
+    except Exception as exc:  # noqa: BLE001 -- loud fail-open, see _log_scan_error
+        _log_scan_error(exc)
         return 0
     if reason:
         print(f"BLOCKED: {reason}", file=sys.stderr)
