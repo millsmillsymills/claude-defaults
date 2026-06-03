@@ -304,6 +304,7 @@ mkdir -p ~/.claude/commands
 cp commands/review-pr.md ~/.claude/commands/
 cp commands/fix-issue.md ~/.claude/commands/
 cp commands/merge-dependabot.md ~/.claude/commands/
+cp commands/shortcut-import.md ~/.claude/commands/
 ```
 
 ### Review PR
@@ -317,6 +318,10 @@ cp commands/merge-dependabot.md ~/.claude/commands/
 ### Merge Dependabot
 
 `commands/merge-dependabot.md` -- Evaluates and merges open Dependabot PRs for a repo. Audits dependabot config, builds a transitive dependency map, batches overlapping PRs, evaluates each in parallel, and merges passing PRs sequentially with post-merge re-testing. Invoke with `/merge-dependabot owner/repo`.
+
+### Shortcut Import
+
+`commands/shortcut-import.md` -- Thin wrapper that invokes the `shortcut-import` skill to lift a repo into Shortcut as Objectives/Epics/Stories (idempotent). Invoke with `/shortcut-import` for the current repo, or `/shortcut-import owner/repo`.
 
 ---
 
@@ -356,7 +361,8 @@ claude-defaults/
 ├── commands/
 │   ├── review-pr.md                # /review-pr <number>
 │   ├── fix-issue.md                # /fix-issue <number>
-│   └── merge-dependabot.md         # /merge-dependabot <owner/repo>
+│   ├── merge-dependabot.md         # /merge-dependabot <owner/repo>
+│   └── shortcut-import.md          # /shortcut-import [owner/repo]
 ├── agents/                         # scaffold for global agents (empty)
 ├── skills/                         # scaffold for global skills (empty)
 ├── docs/
