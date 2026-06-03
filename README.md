@@ -8,12 +8,12 @@ Claude Code configuration defaults. Covers sandboxing, permissions, hooks, skill
 
 | Repo | Active folder | Purpose |
 |---|---|---|
-| `claude-plugin-dev-defaults` | `~/Desktop/Projects/claude-plugin-dev/` | Claude Code plugin development |
-| `claude-skill-dev-defaults`  | `~/Desktop/Projects/claude-skill-dev/`  | Standalone skill development |
-| `mcp-server-dev-defaults`    | `~/Desktop/Projects/mcp-server-dev/`    | MCP server development (Python/Go/TS) |
-| `agent-sdk-dev-defaults`     | `~/Desktop/Projects/agent-sdk-dev/`     | Claude Agent SDK app development |
+| `claude-plugin-dev-defaults` | `~/projects/claude-plugin-dev/` | Claude Code plugin development |
+| `claude-skill-dev-defaults`  | `~/projects/claude-skill-dev/`  | Standalone skill development |
+| `mcp-server-dev-defaults`    | `~/projects/mcp-server-dev/`    | MCP server development (Python/Go/TS) |
+| `agent-sdk-dev-defaults`     | `~/projects/agent-sdk-dev/`     | Claude Agent SDK app development |
 
-Each enables a specialized plugin set on top of the global 10. See the spec at `docs/superpowers/specs/2026-05-20-claude-dev-setup-optimization-design.md` and the implementation plan at `docs/superpowers/plans/2026-05-20-claude-dev-setup-optimization.md`.
+Each enables a specialized plugin set on top of the global 10.
 
 ## First-time setup
 
@@ -133,7 +133,7 @@ Hooks are shell commands (or LLM prompts) that fire at specific points in Claude
 
 This is more powerful than system prompt instructions alone because hooks fire at specific, contextual moments. An instruction in your CLAUDE.md saying "never use rm -rf" can be forgotten or overridden by context pressure. A PreToolUse hook that blocks `rm -rf` fires every single time, with the error message right at the point of decision.
 
-Hooks are not a security boundary -- a prompt injection can work around them. They are structured prompt injection at opportune times: intercepting tool calls, injecting context, blocking known-bad patterns, and steering agent behavior. Guardrails, not walls.
+Hooks intercept tool calls, inject context, block known-bad patterns, and steer agent behavior at the moment it matters. But they aren't a security boundary -- a prompt injection can work around them. Guardrails, not walls.
 
 In practice, use them to:
 
@@ -190,8 +190,6 @@ These are patterns to adapt, not drop-in configs. Only the two blocking hooks in
 ```
 
 On Linux, replace the command with `notify-send 'Claude Code' 'Claude needs your attention'`.
-
-**Enforce package manager** (PreToolUse): `hooks/enforce-package-manager.sh` blocks npm commands in projects that use pnpm and tells Claude to use the right tool. Generalizes to any "use X not Y" convention.
 
 **Anti-rationalization gate** (Stop, prompt hook): Claude has a tendency to declare victory while leaving work undone. It rationalizes skipping things: "these issues were pre-existing," "fixing this is out of scope," "I'll leave these for a follow-up." A prompt-based Stop hook catches this by asking a fast model to review Claude's final response for cop-outs before allowing it to stop.
 
@@ -343,7 +341,6 @@ claude-defaults/
 ├── hooks/
 │   ├── block-rm-rf.sh              # legacy: block rm -rf (active)
 │   ├── block-push-main.sh          # legacy: block push to main (active)
-│   ├── enforce-package-manager.sh  # opt-in: enforce pnpm/yarn
 │   ├── safety-block.py             # shlex-parsed destructive-command blocks (active)
 │   ├── safety-warn.sh              # NEW: warn on sensitive Edit/Write (active)
 │   ├── log-tool-calls.sh           # NEW: rich JSONL log of every tool call (active)
@@ -361,9 +358,7 @@ claude-defaults/
 ├── skills/                         # scaffold for global skills (empty)
 ├── docs/
 │   ├── HOOKS.md                    # every hook documented
-│   ├── LOGGING.md                  # log schema, queries, rotation
-│   ├── PROMOTION-RATIONALE.md      # what was/wasn't promoted from resurgent
-│   └── superpowers/                # specs and implementation plans
+│   └── LOGGING.md                  # log schema, queries, rotation
 └── tests/
     ├── run-all.sh                  # dispatcher
     ├── test-install.sh             # install/uninstall roundtrip
