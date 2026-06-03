@@ -14,6 +14,7 @@ is active.
 
 Usage: python3 scripts/redact-existing-logs.py <log-file> [<log-file> ...]
 """
+
 from __future__ import annotations
 
 import json
@@ -42,9 +43,10 @@ def redact_file(path: str) -> tuple[int, int]:
     fd, tmp = tempfile.mkstemp(dir=dir_name, suffix=".redact.tmp")
     success = False
     try:
-        with os.fdopen(
-            fd, "w", encoding="utf-8", errors="surrogateescape"
-        ) as out, open(path, encoding="utf-8", errors="surrogateescape") as src:
+        with (
+            os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as out,
+            open(path, encoding="utf-8", errors="surrogateescape") as src,
+        ):
             for line in src:
                 stripped = line.rstrip("\n")
                 if not stripped:

@@ -20,6 +20,7 @@ Redaction has two layers (both defined in `_log_core.py`):
 `_log_core._PATTERNS` and `_SECRET_KEY_RE` are the source of truth; this list
 is a summary. Usage: python3 redact.py < input.json > output.json
 """
+
 from __future__ import annotations
 
 import json

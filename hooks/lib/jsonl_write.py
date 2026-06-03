@@ -16,6 +16,7 @@ Exit codes:
 
 Truncation logic + atomic-append helper live in `_log_core.py`.
 """
+
 from __future__ import annotations
 
 import errno

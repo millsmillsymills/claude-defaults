@@ -25,6 +25,7 @@ patterns and truncation logic exist in exactly one place:
 
 Compatible with Python 3.9+ (relies on PEP 563 deferred annotations).
 """
+
 from __future__ import annotations
 
 import json
@@ -40,14 +41,19 @@ import re
 # as an AWS key, not as a `key=value` pair).
 _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # JWT (three base64url segments separated by dots, first two start with eyJ)
-    (re.compile(r"eyJ[A-Za-z0-9_\-]{4,}\.eyJ[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}"),
-     "***JWT***"),
+    (
+        re.compile(r"eyJ[A-Za-z0-9_\-]{4,}\.eyJ[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}"),
+        "***JWT***",
+    ),
     # PEM private key blocks (any key type). Non-greedy between fixed anchors,
     # DOTALL so it spans the newline-delimited body -- no backtracking risk.
-    (re.compile(
-        r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
-        re.DOTALL,
-    ), "***PRIVATE_KEY***"),
+    (
+        re.compile(
+            r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+            re.DOTALL,
+        ),
+        "***PRIVATE_KEY***",
+    ),
     # AWS access key
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "***AWS_KEY***"),
     # AWS STS temporary credential keys (separate prefix from AKIA)
@@ -68,15 +74,19 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Twilio Account SID (AC + 32 hex)
     (re.compile(r"\bAC[a-f0-9]{32}\b"), "***TWILIO_SID***"),
     # SendGrid API keys (SG.<22>.<43>)
-    (re.compile(r"\bSG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}\b"),
-     "***SENDGRID_KEY***"),
+    (
+        re.compile(r"\bSG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}\b"),
+        "***SENDGRID_KEY***",
+    ),
     # Anthropic API keys
     (re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{8,}\b"), "***ANTHROPIC_KEY***"),
     # OpenAI keys -- legacy (sk-...) and modern project/service/admin keys
     # (sk-proj-, sk-svcacct-, sk-admin-) which contain - and _ and run long.
     # Runs after the Anthropic pattern so sk-ant- keys keep their own marker.
-    (re.compile(r"\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_\-]{20,}\b"),
-     "***OPENAI_KEY***"),
+    (
+        re.compile(r"\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_\-]{20,}\b"),
+        "***OPENAI_KEY***",
+    ),
     # URL userinfo passwords: postgresql://user:password@host/db -- redact any
     # non-empty password between : and @ while preserving the user and host.
     (re.compile(r"(://[^:@\s/]+):([^@\s]{1,})@"), r"\1:***@"),
@@ -85,31 +95,41 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # (no boundary before "PASSWORD"). Require `_` before the suffix word to
     # avoid matches inside ordinary words (MONKEY, BUCKET, TICKET would hit
     # "KEY"/"TOKEN"). Case-insensitive so lowercase/mixed-case names match too.
-    (re.compile(
-        r"([A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*"
-        r"_(?:PASSWORD|PASSWD|SECRET|TOKEN|KEY|PAT|CREDENTIAL|CREDENTIALS|AUTH|URL))"
-        r"(\s*=\s*)([^\s,;'\"]{1,})",
-        re.IGNORECASE,
-    ), r"\1\2***"),
+    (
+        re.compile(
+            r"([A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*"
+            r"_(?:PASSWORD|PASSWD|SECRET|TOKEN|KEY|PAT|CREDENTIAL|CREDENTIALS|AUTH|URL))"
+            r"(\s*=\s*)([^\s,;'\"]{1,})",
+            re.IGNORECASE,
+        ),
+        r"\1\2***",
+    ),
     # key=value secrets where value is a single shell/URL token (no internal
     # whitespace). No minimum value length -- a named secret of any size leaks.
-    (re.compile(
-        r"(?i)\b(password|passwd|secret|token|api[_-]?key)"
-        r"(\s*[:=]\s*)([^\s,;'\"]{1,})"
-    ), r"\1\2***"),
+    (
+        re.compile(
+            r"(?i)\b(password|passwd|secret|token|api[_-]?key)"
+            r"(\s*[:=]\s*)([^\s,;'\"]{1,})"
+        ),
+        r"\1\2***",
+    ),
     # Header-style: Authorization: <scheme> <credential...>; Bearer <token>
     # Value class allows internal spaces; stops at line/quote/comma/semicolon.
     # Separator may be ':', '=', or whitespace alone (e.g. `Bearer abc`).
     # Value class excludes '*' so we don't re-match earlier-redacted markers
     # (e.g. preserve `Bearer ***JWT***` -> `Bearer ***`).
-    (re.compile(
-        r"(?i)\b(authorization|bearer)"
-        r"(\s*[:=]\s*|\s+)([^*,;'\"\r\n]{3,})"
-    ), r"\1\2***"),
+    (
+        re.compile(
+            r"(?i)\b(authorization|bearer)"
+            r"(\s*[:=]\s*|\s+)([^*,;'\"\r\n]{3,})"
+        ),
+        r"\1\2***",
+    ),
     # --flag=value CLI secrets
-    (re.compile(
-        r"(--(?:password|token|secret|api[_-]?key))(=)([^\s,;'\"]{3,})"
-    ), r"\1\2***"),
+    (
+        re.compile(r"(--(?:password|token|secret|api[_-]?key))(=)([^\s,;'\"]{3,})"),
+        r"\1\2***",
+    ),
 ]
 
 
@@ -159,7 +179,8 @@ def redact_value(v: object) -> object:
         return [redact_value(x) for x in v]
     if isinstance(v, dict):
         return {
-            k: "***" if isinstance(k, str) and _SECRET_KEY_RE.fullmatch(k)
+            k: "***"
+            if isinstance(k, str) and _SECRET_KEY_RE.fullmatch(k)
             else redact_value(val)
             for k, val in v.items()
         }
@@ -231,7 +252,9 @@ def truncate_output(obj: dict, max_bytes: int) -> dict:
         if keep >= len(encoded):
             continue
         output[key] = encoded[:keep].decode("utf-8", errors="replace")
-        output["_truncated_bytes"] = output.get("_truncated_bytes", 0) + (len(encoded) - keep)
+        output["_truncated_bytes"] = output.get("_truncated_bytes", 0) + (
+            len(encoded) - keep
+        )
 
     # If even empty stdout/stderr cannot bring the line under max_bytes, the
     # envelope alone exceeds the cap. Flag it honestly rather than letting
