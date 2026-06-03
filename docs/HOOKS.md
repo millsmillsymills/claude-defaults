@@ -4,13 +4,13 @@ Every hook installed by claude-defaults, what it does, and how to test it. The h
 
 ## Missing-hook safety net
 
-Every command-type hook in `settings.json` is invoked through `run-hook.sh <name> [args]` rather than referencing the script directly (the one exception is `session-heal.sh`, wired directly — see below). This wrapper plus a `doctor.sh` self-heal step make a missing directory or a renamed/removed hook a non-event instead of a `/bin/sh: ...: No such file or directory` failure.
+Every command-type hook in `settings.json` is invoked through `run-hook.sh <name> [args]` rather than referencing the script directly (the one exception is `session-heal.sh`, wired directly -- see below). This wrapper plus a `doctor.sh` self-heal step make a missing directory or a renamed/removed hook a non-event instead of a `/bin/sh: ...: No such file or directory` failure.
 
-- **`run-hook.sh` (runtime, in every hook command).** Ensures `logs/` and `hooks/lib/` exist and resolves its own symlink back to the repo, so it can run the real script even when `~/.claude/hooks/<name>` is missing or dangling. It does **not** rewrite symlinks — repairing the install is `doctor.sh`'s job, not the per-tool-call hot path. If the hook genuinely can't be found it warns on stderr and exits 0 (fails OPEN, so infrastructure breakage never blocks a tool call); a real hook's own exit code (including 2 to block) is propagated unchanged. When the skipped hook is a **security** hook (`safety-block.py`, `block-rm-rf.sh`, `block-push-main.sh`), or python3 is unavailable for a `.py` hook, the skip is also recorded to `logs/hook-errors.log` and warned loudly — a never-ran guard must not be silent.
+- **`run-hook.sh` (runtime, in every hook command).** Ensures `logs/` and `hooks/lib/` exist and resolves its own symlink back to the repo, so it can run the real script even when `~/.claude/hooks/<name>` is missing or dangling. It does **not** rewrite symlinks -- repairing the install is `doctor.sh`'s job, not the per-tool-call hot path. If the hook genuinely can't be found it warns on stderr and exits 0 (fails OPEN, so infrastructure breakage never blocks a tool call); a real hook's own exit code (including 2 to block) is propagated unchanged. When the skipped hook is a **security** hook (`safety-block.py`, `block-rm-rf.sh`, `block-push-main.sh`), or python3 is unavailable for a `.py` hook, the skip is also recorded to `logs/hook-errors.log` and warned loudly -- a never-ran guard must not be silent.
 - **`session-heal.sh` (SessionStart).** Wired **directly** (not through `run-hook.sh`) so it can rebuild the wrapper's own symlink if that is what went missing. Runs `doctor.sh --quick`, appending output to `logs/session-heal.log` for a forensic trail, and never blocks startup.
 - **`scripts/doctor.sh` (manual or via SessionStart).** Prunes dangling symlinks under the managed `hooks/`, `hooks/lib/`, `commands/`, `agents/`, and `skills/` dirs (links to vanished repo targets only; foreign links are left alone), then re-links missing content. `--quick` stops there; the default also re-merges `settings.json` from the template (collapsing any duplicated hook groups and picking up renamed hooks). Idempotent. Run it after renaming or removing a hook.
 
-Hook **content** can't be regenerated — symlinks point into this repo, so if a repo script is deleted the wrapper degrades to a logged skip rather than an error. Re-add the script and run `scripts/doctor.sh`.
+Hook **content** can't be regenerated -- symlinks point into this repo, so if a repo script is deleted the wrapper degrades to a logged skip rather than an error. Re-add the script and run `scripts/doctor.sh`.
 
 ## Hook events (Claude Code)
 
@@ -44,7 +44,7 @@ echo '{"tool_input":{"command":"rm -rf /tmp"}}' | bash hooks/block-rm-rf.sh
 
 ### `block-push-main.sh` (legacy, PreToolUse Bash)
 
-Blocks `git push <remote> main` or `git push <remote> master`. Does NOT cover force-push or production branches — that's `safety-block.py`'s job.
+Blocks `git push <remote> main` or `git push <remote> master`. Does NOT cover force-push or production branches -- that's `safety-block.py`'s job.
 
 ### `safety-block.py` (PreToolUse Bash, exit 2)
 
@@ -87,7 +87,7 @@ Gzip-rotate today's log if it exceeds `CLAUDE_LOG_ROTATE_BYTES` (default 100 MB)
 
 ### `enforce-package-manager.sh` (optional, PreToolUse Bash)
 
-Blocks `npm` commands when the cwd contains `pnpm-lock.yaml` or `yarn.lock`. **NOT wired up by default** — opt in by adding it to `settings.json` if you want strict enforcement.
+Blocks `npm` commands when the cwd contains `pnpm-lock.yaml` or `yarn.lock`. **NOT wired up by default** -- opt in by adding it to `settings.json` if you want strict enforcement.
 
 ### Anti-rationalization Stop hook (`type: "prompt"`)
 
@@ -115,6 +115,6 @@ Low severity for a single-account local setup (primary and fast model share one 
 Because the live `settings.json` and the `~/.claude/hooks/` symlinks are derived from this repo, a rename leaves a stale symlink behind. After renaming/removing a hook in the repo:
 
 1. Update the template `settings.json` reference (the wrapper arg).
-2. Run `./scripts/doctor.sh` — it prunes the now-dangling symlink and re-merges `settings.json`.
+2. Run `./scripts/doctor.sh` -- it prunes the now-dangling symlink and re-merges `settings.json`.
 
 Until you do, `run-hook.sh` and the SessionStart self-heal keep the old name from erroring (logged skip / auto-prune).
