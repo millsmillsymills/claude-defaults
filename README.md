@@ -191,8 +191,6 @@ These are patterns to adapt, not drop-in configs. Only the two blocking hooks in
 
 On Linux, replace the command with `notify-send 'Claude Code' 'Claude needs your attention'`.
 
-**Enforce package manager** (PreToolUse): `hooks/enforce-package-manager.sh` blocks npm commands in projects that use pnpm and tells Claude to use the right tool. Generalizes to any "use X not Y" convention.
-
 **Anti-rationalization gate** (Stop, prompt hook): Claude has a tendency to declare victory while leaving work undone. It rationalizes skipping things: "these issues were pre-existing," "fixing this is out of scope," "I'll leave these for a follow-up." A prompt-based Stop hook catches this by asking a fast model to review Claude's final response for cop-outs before allowing it to stop.
 
 ```json
@@ -343,7 +341,6 @@ claude-defaults/
 ├── hooks/
 │   ├── block-rm-rf.sh              # legacy: block rm -rf (active)
 │   ├── block-push-main.sh          # legacy: block push to main (active)
-│   ├── enforce-package-manager.sh  # opt-in: enforce pnpm/yarn
 │   ├── safety-block.py             # shlex-parsed destructive-command blocks (active)
 │   ├── safety-warn.sh              # NEW: warn on sensitive Edit/Write (active)
 │   ├── log-tool-calls.sh           # NEW: rich JSONL log of every tool call (active)

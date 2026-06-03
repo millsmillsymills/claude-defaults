@@ -85,10 +85,6 @@ Append a JSONL row per tool call to `~/.claude/logs/tool-calls-YYYY-MM-DD.jsonl`
 
 Gzip-rotate today's log if it exceeds `CLAUDE_LOG_ROTATE_BYTES` (default 100 MB), prune logs older than `CLAUDE_LOG_RETAIN_DAYS` days (default 365).
 
-### `enforce-package-manager.sh` (optional, PreToolUse Bash)
-
-Blocks `npm` commands when the cwd contains `pnpm-lock.yaml` or `yarn.lock`. **NOT wired up by default** -- opt in by adding it to `settings.json` if you want strict enforcement.
-
 ### Anti-rationalization Stop hook (`type: "prompt"`)
 
 Inline prompt-type hook in `settings.json`. Sends Claude's final response to a fast model that returns `{"ok": false, "reason": "..."}` or `{"ok": true}`. If rejected, Claude must continue.
