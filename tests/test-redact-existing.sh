@@ -35,7 +35,9 @@ LC_ALL=C grep -qaF 'bad-byte:' "$log" || fail_msg "undecodable line dropped"
 LC_ALL=C grep -qaF $'\xff' "$log" || fail_msg "undecodable byte not preserved verbatim"
 
 # File mode must remain 0644 (not tightened to mkstemp's 0600).
-mode=$(stat -f '%Lp' "$log" 2>/dev/null || stat -c '%a' "$log")
+# GNU stat first: BSD `stat -f '%Lp'` collides with GNU's `-f` (--file-system),
+# which succeeds and prints a filesystem dump instead of falling through.
+mode=$(stat -c '%a' "$log" 2>/dev/null || stat -f '%Lp' "$log")
 [ "$mode" = "644" ] || fail_msg "mode changed to $mode (expected 644)"
 
 if [ "$fail" -eq 0 ]; then
