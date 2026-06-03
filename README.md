@@ -63,7 +63,7 @@ Copy `settings.json` to `~/.claude/settings.json` (or merge entries into your ex
 - **alwaysThinkingEnabled: true** -- persists extended thinking across sessions. Toggle per-session with Option+T. Adds latency and cost on simple tasks; worth it for complex reasoning.
 - **permissions** -- deny rules that block reading credentials/secrets and editing shell config (see [Sandboxing](#sandboxing))
 - **cleanupPeriodDays: 365** -- keeps conversation history for a year instead of the default 30 days, so `/insights` has more data
-- **hooks** -- PreToolUse Bash blockers (`rm -rf`, push to main, extended destructive patterns), a PreToolUse Edit/Write sensitive-path warning, PreToolUse/PostToolUse tool-call logging, a SessionEnd log-rotate, and a Stop anti-rationalization prompt (see [Hooks](#hooks))
+- **hooks** -- three PreToolUse Bash blockers (`block-rm-rf.sh`, `block-push-main.sh`, and `safety-block.py`'s extended destructive patterns), a PreToolUse Edit/Write sensitive-path warning, PreToolUse/PostToolUse tool-call logging, a SessionStart self-heal (`doctor.sh --quick`), a SessionEnd log-rotate, and a Stop anti-rationalization prompt. Every command hook is dispatched through `run-hook.sh` (see [Hooks](#hooks))
 - **statusLine** -- points to the statusline script (see below)
 
 ## Statusline
@@ -167,9 +167,9 @@ Guide and examples: [Automate workflows with hooks](https://docs.anthropic.com/e
 
 #### Examples
 
-These are patterns to adapt, not drop-in configs. Only the two blocking hooks in `settings.json` are recommended defaults. Everything else below is here for inspiration -- read the code, understand what it does, and tailor it to your workflow before using it.
+These are patterns to adapt, not drop-in configs. The hooks already wired in `settings.json` (blockers, the sensitive-path warning, logging, self-heal, log-rotate, and the Stop prompt) are the recommended defaults. The standalone snippets below are here for inspiration -- read the code, understand what it does, and tailor it to your workflow before using it.
 
-**Blocking patterns** (PreToolUse, in settings.json): The two hooks in this repo's `settings.json` block `rm -rf` (suggests trash instead) and direct push to main/master (requires feature branches). Both read the Bash command from stdin via jq, match with regex, and exit 2 with an error message that tells Claude what to do instead. See `hooks/block-rm-rf.sh` and `hooks/block-push-main.sh`.
+**Blocking patterns** (PreToolUse, in settings.json): Three hooks block destructive actions by default. `block-rm-rf.sh` blocks `rm -rf` (suggests trash instead) and `block-push-main.sh` blocks direct push to main/master (requires feature branches) -- both read the Bash command from stdin via jq and match with regex. `safety-block.py` covers a wider set -- `dd`/`mkfs`/`wipefs` against a disk, fork bombs, `chmod -R 777` of `/` or `~`, disk-partitioning tools, and force-pushes to protected branches -- by shlex-parsing the command in Python (including nested `bash -c` payloads) rather than regex. All three exit 2 with an error message that tells Claude what to do instead, and all are invoked via `run-hook.sh <name>` rather than directly. See `hooks/block-rm-rf.sh`, `hooks/block-push-main.sh`, and `hooks/safety-block.py`.
 
 **Desktop notifications** (Notification): Fires a native OS notification when Claude needs your attention, so you can switch to other work during long autonomous runs instead of watching the terminal.
 
@@ -343,6 +343,7 @@ For each project you work on, add a `CLAUDE.md` at the repo root with project-sp
 claude-defaults/
 ├── README.md                       # This file
 ├── LICENSE
+├── SECURITY.md                     # Supply-chain posture and reporting
 ├── settings.json                   # Global settings template (merged into ~/.claude/settings.json)
 ├── mcp-template.json               # MCP server config template
 ├── claude-md-template.md           # Global CLAUDE.md template (Python/TS/Rust/Go/Bash/GH Actions)
@@ -350,14 +351,19 @@ claude-defaults/
 │   ├── install.sh                  # Hybrid installer (--dry-run, --force, components)
 │   ├── uninstall.sh                # Reverse install, restore backup
 │   ├── validate.sh                 # Verify symlinks, log dir, hooks wired
+│   ├── doctor.sh                   # Self-heal: prune dangling symlinks, re-link, re-merge settings
+│   ├── hook-events.sh              # Canonical hook-event list (sourced by install.sh + validate.sh)
+│   ├── redact-existing-logs.py     # Retro-redact secrets in already-written logs
 │   └── statusline.sh               # Two-line terminal status bar
 ├── hooks/
-│   ├── block-rm-rf.sh              # legacy: block rm -rf (active)
-│   ├── block-push-main.sh          # legacy: block push to main (active)
+│   ├── run-hook.sh                 # Dispatch wrapper -- every command hook runs as run-hook.sh <name>
+│   ├── block-rm-rf.sh              # Block rm -rf (active)
+│   ├── block-push-main.sh          # Block push to main (active)
 │   ├── safety-block.py             # shlex-parsed destructive-command blocks (active)
-│   ├── safety-warn.sh              # NEW: warn on sensitive Edit/Write (active)
-│   ├── log-tool-calls.sh           # NEW: rich JSONL log of every tool call (active)
-│   ├── log-rotate.sh               # NEW: SessionEnd gzip+prune (active)
+│   ├── safety-warn.sh              # Warn on sensitive Edit/Write (active)
+│   ├── log-tool-calls.sh           # Rich JSONL log of every tool call (active)
+│   ├── log-rotate.sh               # SessionEnd gzip+prune (active)
+│   ├── session-heal.sh             # SessionStart self-heal -- runs doctor.sh --quick (active)
 │   └── lib/
 │       ├── _log_core.py            # shared patterns + truncation + atomic append
 │       ├── redact.py               # secret-pattern redaction CLI (uses _log_core)
@@ -375,8 +381,14 @@ claude-defaults/
 └── tests/
     ├── run-all.sh                  # dispatcher
     ├── test-install.sh             # install/uninstall roundtrip
+    ├── test-doctor.sh              # doctor.sh idempotency
     ├── test-hooks.sh               # per-hook assertions
+    ├── test-guard-hooks.sh         # block-* / safety-block guard coverage
+    ├── test-hook-resilience.sh     # dispatch + self-heal resilience
     ├── test-redaction.sh           # secret-pattern coverage
+    ├── test-redact-existing.sh     # retro-redaction of existing logs
+    ├── test-truncate.sh            # oversize-line truncation
+    ├── test-statusline.sh          # statusline rendering
     ├── test-settings-valid.sh      # JSON parse + hook path checks
     └── fixtures/                   # mock Claude hook stdin inputs
 ```
