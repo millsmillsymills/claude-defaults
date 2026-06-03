@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # SessionStart hook: lightweight self-heal of the claude-defaults install.
 # Wired DIRECTLY in settings.json (not via run-hook.sh) so it can rebuild the
-# wrapper's own symlink when that is the thing that went missing. Recreates
-# missing/dangling symlinks and runtime dirs so a renamed or removed hook can't
-# surface a "No such file or directory" error mid-session. Never blocks startup.
+# wrapper's own symlink when that is the thing that went missing -- repairing
+# dangling links and runtime dirs before a renamed/removed hook surfaces a
+# "No such file or directory" error mid-session. Never blocks startup.
 set -uo pipefail
 
 self="${BASH_SOURCE[0]}"
