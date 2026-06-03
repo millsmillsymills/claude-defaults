@@ -8,10 +8,10 @@ Claude Code configuration defaults. Covers sandboxing, permissions, hooks, skill
 
 | Repo | Active folder | Purpose |
 |---|---|---|
-| `claude-plugin-dev-defaults` | `~/Desktop/Projects/claude-plugin-dev/` | Claude Code plugin development |
-| `claude-skill-dev-defaults`  | `~/Desktop/Projects/claude-skill-dev/`  | Standalone skill development |
-| `mcp-server-dev-defaults`    | `~/Desktop/Projects/mcp-server-dev/`    | MCP server development (Python/Go/TS) |
-| `agent-sdk-dev-defaults`     | `~/Desktop/Projects/agent-sdk-dev/`     | Claude Agent SDK app development |
+| `claude-plugin-dev-defaults` | `~/projects/claude-plugin-dev/` | Claude Code plugin development |
+| `claude-skill-dev-defaults`  | `~/projects/claude-skill-dev/`  | Standalone skill development |
+| `mcp-server-dev-defaults`    | `~/projects/mcp-server-dev/`    | MCP server development (Python/Go/TS) |
+| `agent-sdk-dev-defaults`     | `~/projects/agent-sdk-dev/`     | Claude Agent SDK app development |
 
 Each enables a specialized plugin set on top of the global 10.
 
@@ -358,8 +358,7 @@ claude-defaults/
 ├── skills/                         # scaffold for global skills (empty)
 ├── docs/
 │   ├── HOOKS.md                    # every hook documented
-│   ├── LOGGING.md                  # log schema, queries, rotation
-│   └── PROMOTION-RATIONALE.md      # what was/wasn't promoted from resurgent
+│   └── LOGGING.md                  # log schema, queries, rotation
 └── tests/
     ├── run-all.sh                  # dispatcher
     ├── test-install.sh             # install/uninstall roundtrip
