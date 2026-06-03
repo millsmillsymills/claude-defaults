@@ -82,10 +82,13 @@ echo "--- heal content (via install.sh) ---"
 # left by a renamed hook) is overwritten rather than backed up and left in
 # place. Settings is handled separately below -- it must NOT get --force.
 # Single array (always non-empty) so the expansion is safe under bash 3.2 + set -u.
+# set -uo pipefail has no -e, so a failed install.sh would otherwise be
+# swallowed and doctor would still exit 0. Track each pass and propagate.
+rc=0
 link_argv=()
 [ "$DRY_RUN" = "1" ] && link_argv+=(--dry-run)
 link_argv+=(--force hooks commands agents skills statusline claude-md logs-dir)
-bash "${REPO_DIR}/scripts/install.sh" "${link_argv[@]}"
+bash "${REPO_DIR}/scripts/install.sh" "${link_argv[@]}" || rc=1
 
 # Re-merge settings WITHOUT --force so an unchanged merge is a true no-op:
 # install.sh's content-aware guard then skips the rewrite and takes no backup,
@@ -96,8 +99,12 @@ if [ "$QUICK" != "1" ]; then
   settings_argv=()
   [ "$DRY_RUN" = "1" ] && settings_argv+=(--dry-run)
   settings_argv+=(settings)
-  bash "${REPO_DIR}/scripts/install.sh" "${settings_argv[@]}"
+  bash "${REPO_DIR}/scripts/install.sh" "${settings_argv[@]}" || rc=1
 fi
 
 echo ""
+if [ "$rc" != "0" ]; then
+  echo "doctor: install.sh reported errors -- see output above." >&2
+  exit "$rc"
+fi
 echo "doctor complete. Run scripts/validate.sh to verify."
