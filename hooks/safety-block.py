@@ -6,13 +6,15 @@ payload tucked inside ``bash -c '...'``, ``sh -c '...'`` or ``eval '...'`` is
 unwrapped and checked too -- the previous shell implementation stripped quoted
 strings before matching, which let any of those wrappers bypass every pattern.
 
-Exit 2 with an explanation blocks the call; exit 0 allows it. The hook fails
-open -- malformed input or a scan crash exits 0 so a parser edge case never
-wedges the session, and ``permissions.deny`` in settings.json is the hard
-backstop for the ``rm -rf`` / ``sudo`` classes. But a *scan* crash means a
-guard ran on a real command and let it through unchecked, so that case is
-logged loudly to ``logs/hook-errors.log`` and stderr (mirroring run-hook.sh) --
-a never-enforced security matcher must not fail silently.
+Exit 2 with an explanation blocks the call; exit 0 allows it. Malformed input
+(unparseable JSON, a non-string command) fails *open* -- there is nothing to
+scan, so a parser edge case never wedges the session, and ``permissions.deny``
+in settings.json is the hard backstop for the ``rm -rf`` / ``sudo`` classes. A
+*scan crash* fails *closed*: a matcher threw on a real command, so there is no
+verdict, and the destructive classes with no deny-list backstop (``dd``,
+``mkfs``, fork bombs, ...) would otherwise pass unchecked. That one command is
+blocked and the crash is logged loudly to ``logs/hook-errors.log`` and stderr
+(mirroring run-hook.sh) so the matcher bug is fixable.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ import json
 import re
 import shlex
 import sys
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -77,20 +80,25 @@ def _is_rm_rf_protected(seg: list[str]) -> bool:
         i += 1
     if i >= len(seg) or seg[i] != "rm":
         return False
-    rest = seg[i + 1:]
+    rest = seg[i + 1 :]
     return _has_recursive_force(rest) and any(_is_protected_target(t) for t in rest)
 
 
 def _is_sudo_rm_rf(seg: list[str]) -> bool:
     """`sudo rm` with recursive+force flags against any target."""
-    return len(seg) >= 2 and seg[0] == "sudo" and seg[1] == "rm" \
+    return (
+        len(seg) >= 2
+        and seg[0] == "sudo"
+        and seg[1] == "rm"
         and _has_recursive_force(seg[2:])
+    )
 
 
 def _is_dd_to_disk(seg: list[str]) -> bool:
     """`dd` writing to a raw disk device."""
-    return bool(seg) and _base(seg[0]) == "dd" \
-        and any(_RE_DD_DISK.match(t) for t in seg)
+    return (
+        bool(seg) and _base(seg[0]) == "dd" and any(_RE_DD_DISK.match(t) for t in seg)
+    )
 
 
 def _is_mkfs(seg: list[str]) -> bool:
@@ -109,8 +117,9 @@ def _is_disk_partition(seg: list[str]) -> bool:
     if base == "fdisk":
         return "-w" in seg or any(t.startswith("/dev/") for t in seg)
     if base == "parted":
-        return any(t.startswith("/dev/") for t in seg) \
-            and any(t in ("mklabel", "mkpart", "rm", "resizepart") for t in seg)
+        return any(t.startswith("/dev/") for t in seg) and any(
+            t in ("mklabel", "mkpart", "rm", "resizepart") for t in seg
+        )
     return False
 
 
@@ -138,7 +147,7 @@ def _is_force_push(seg: list[str]) -> bool:
     """
     if "git" not in [_base(t) for t in seg] or "push" not in seg:
         return False
-    after_push = seg[seg.index("push") + 1:]
+    after_push = seg[seg.index("push") + 1 :]
     positionals = [t for t in after_push if not t.startswith("-")]
     branches = positionals[1:]  # first positional is the remote
     # A leading `+` on a refspec (`git push origin +main`) is a force update
@@ -155,21 +164,30 @@ def _is_fork_bomb(seg: list[str]) -> bool:
 
 
 _CHECKS: list[tuple] = [
-    (_is_rm_rf_protected,
-     "rm -rf against root, /Users, ~, or $HOME. Use 'trash' or a specific path."),
-    (_is_sudo_rm_rf,
-     "sudo rm -rf is too dangerous. Run targeted deletes manually if needed."),
-    (_is_dd_to_disk,
-     "dd writing to /dev/disk*, /dev/sd*, /dev/nvme*, or /dev/rdisk* destroys "
-     "the disk. Refusing."),
+    (
+        _is_rm_rf_protected,
+        "rm -rf against root, /Users, ~, or $HOME. Use 'trash' or a specific path.",
+    ),
+    (
+        _is_sudo_rm_rf,
+        "sudo rm -rf is too dangerous. Run targeted deletes manually if needed.",
+    ),
+    (
+        _is_dd_to_disk,
+        "dd writing to /dev/disk*, /dev/sd*, /dev/nvme*, or /dev/rdisk* destroys "
+        "the disk. Refusing.",
+    ),
     (_is_mkfs, "mkfs/wipefs against any device wipes data. Refusing."),
     (_is_disk_partition, "fdisk/parted write operation. Refusing."),
     (_is_fork_bomb, "fork bomb pattern detected."),
-    (_is_chmod_777,
-     "chmod -R 777 against / or ~ is destructive (loses original perms). "
-     "Refusing."),
-    (_is_force_push,
-     "force-push detected. Use a feature branch and PR, not a force push."),
+    (
+        _is_chmod_777,
+        "chmod -R 777 against / or ~ is destructive (loses original perms). Refusing.",
+    ),
+    (
+        _is_force_push,
+        "force-push detected. Use a feature branch and PR, not a force push.",
+    ),
 ]
 
 
@@ -199,8 +217,10 @@ def _nested_payloads(seg: list[str]):
             # string in the next token. Matching only `-c` let those wrappers
             # smuggle a payload past every check.
             is_dash_c = token == "-c" or (
-                len(token) > 1 and token[0] == "-"
-                and token[1] != "-" and token.endswith("c")
+                len(token) > 1
+                and token[0] == "-"
+                and token[1] != "-"
+                and token.endswith("c")
             )
             if is_dash_c and i + 1 < len(seg):
                 yield seg[i + 1]
@@ -252,23 +272,34 @@ def scan(cmd: str, depth: int = 0) -> str | None:
 
 
 def _log_scan_error(exc: BaseException) -> None:
-    """Record a scan crash to a durable log and stderr before failing open."""
+    """Record a scan crash to a durable log and stderr; the caller fails closed."""
     try:
         print(
-            "WARNING: safety-block.py scan crashed; destructive-command guard NOT "
-            f"enforced and the command was ALLOWED unchecked ({exc!r}).",
+            f"WARNING: safety-block.py scan crashed ({exc!r}); the "
+            "destructive-command guard could not run. File a bug or run "
+            "scripts/doctor.sh.",
             file=sys.stderr,
         )
     except OSError:
-        pass  # a dead stderr must never override the fail-open contract
+        pass  # a dead stderr must never change the fail-closed verdict
     try:
         log_dir = Path.home() / ".claude" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         with (log_dir / "hook-errors.log").open("a", encoding="utf-8") as fh:
             fh.write(f"{stamp} safety-block.py scan-error: {exc!r}\n")
-    except OSError:
-        pass  # logging must never override the fail-open contract
+            fh.write(
+                "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+            )
+    except OSError as log_exc:
+        try:
+            print(
+                "WARNING: safety-block.py could not write hook-errors.log "
+                f"({log_exc!r}); the scan-crash audit trail was lost.",
+                file=sys.stderr,
+            )
+        except OSError:
+            pass
 
 
 def main() -> int:
@@ -283,9 +314,18 @@ def main() -> int:
         return 0
     try:
         reason = scan(cmd)
-    except Exception as exc:  # noqa: BLE001 -- loud fail-open, see _log_scan_error
+    except Exception as exc:  # noqa: BLE001 -- fail closed + loud, see _log_scan_error
         _log_scan_error(exc)
-        return 0
+        try:
+            print(
+                "BLOCKED: safety-block.py could not verify this command "
+                "(scan crashed). Refusing out of caution -- rerun, or bypass "
+                "explicitly if you trust it.",
+                file=sys.stderr,
+            )
+        except OSError:
+            pass  # block regardless of whether the message reached the user
+        return 2
     if reason:
         print(f"BLOCKED: {reason}", file=sys.stderr)
         return 2
