@@ -221,26 +221,32 @@ done
 export HOME="$HOME2_OLD"
 rm -rf "$TEST_HOME7"
 
-# #17: a Stop hook wired to a repo script must be recognized by the idempotency
-# guard. Pre-seed settings.json with ONLY a Stop hook pointing at a repo script;
-# a non-force re-install must detect it and skip (so no duplicate Stop hook).
-TEST_HOME8=$(mktemp -d -t claude-defaults-stop.XXXXXX)
+# #71: the idempotency guard is content-aware. A re-run with no change is a
+# true no-op (skip, no re-backup); a re-run after the live file drifts from the
+# template re-merges and propagates the missing entry.
+TEST_HOME8=$(mktemp -d -t claude-defaults-idem.XXXXXX)
 export HOME="$TEST_HOME8"
 mkdir -p "$TEST_HOME8/.claude"
-cat >"$TEST_HOME8/.claude/settings.json" <<'PRE'
-{
-  "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "hooks": {
-    "Stop": [
-      {"hooks": [{"type": "command", "command": "$HOME/.claude/hooks/log-rotate.sh"}]}
-    ]
-  }
-}
-PRE
-out=$(bash "$REPO_DIR/scripts/install.sh" settings 2>&1) || fail_msg "#17: Stop-guard install failed"
-echo "$out" | grep -q "already merged" || fail_msg "#17: idempotency guard did not recognize Stop-only install"
-stop_count=$(jq '[.hooks.Stop[]?.hooks[]?] | length' "$TEST_HOME8/.claude/settings.json")
-[ "$stop_count" = "1" ] || fail_msg "#17: Stop hook count=$stop_count after guarded re-install (expected 1, no dup)"
+bash "$REPO_DIR/scripts/install.sh" settings >/dev/null || fail_msg "#71: first settings install failed"
+
+# No-op: re-running without changes skips and creates no new backup.
+backup_count() { find "$TEST_HOME8/.claude/backups" -maxdepth 1 -name 'pre-claude-defaults-*' 2>/dev/null | wc -l; }
+backups_before=$(backup_count)
+cp "$TEST_HOME8/.claude/settings.json" "$TEST_HOME8/before.json"
+out=$(bash "$REPO_DIR/scripts/install.sh" settings 2>&1) || fail_msg "#71: no-op re-install failed"
+echo "$out" | grep -q "already up to date" || fail_msg "#71: unchanged re-run did not report a no-op skip"
+[ "$(backup_count)" = "$backups_before" ] || fail_msg "#71: no-op re-run created a backup"
+cmp -s "$TEST_HOME8/before.json" "$TEST_HOME8/.claude/settings.json" || fail_msg "#71: no-op re-run rewrote settings.json"
+
+# Propagate: drop a template deny entry to mimic a stale install predating a
+# template addition; a plain re-run must restore it (not silently skip).
+jq 'del(.permissions.deny[] | select(. == "Bash(rm -rf *)"))' \
+  "$TEST_HOME8/.claude/settings.json" >"$TEST_HOME8/.claude/settings.json.t"
+mv "$TEST_HOME8/.claude/settings.json.t" "$TEST_HOME8/.claude/settings.json"
+out=$(bash "$REPO_DIR/scripts/install.sh" settings 2>&1) || fail_msg "#71: re-merge after drift failed"
+echo "$out" | grep -q "merged settings" || fail_msg "#71: drifted re-run skipped instead of re-merging"
+got=$(jq -r '[.permissions.deny[] | select(. == "Bash(rm -rf *)")] | length' "$TEST_HOME8/.claude/settings.json")
+[ "$got" = "1" ] || fail_msg "#71: template deny entry not propagated on re-run (count=$got)"
 export HOME="$HOME2_OLD"
 rm -rf "$TEST_HOME8"
 
