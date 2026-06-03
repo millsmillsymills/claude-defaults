@@ -6,15 +6,9 @@ set -uo pipefail
 # (install.sh only iterates files that currently exist, so a stale link to a
 # vanished source is never revisited).
 #
-# Usage:
-#   ./scripts/doctor.sh [--quick] [--dry-run]
-#     --quick    Symlinks + dirs only; skip the settings.json re-merge.
-#                Used by the SessionStart hook so startup stays cheap and
-#                never rewrites settings.json behind the user's back.
-#     (default)  Quick repairs + re-merge settings.json from the template
-#                (collapses duplicated hook groups, picks up renamed hooks).
-#
-# Idempotent and safe to run repeatedly.
+# --quick (used by the SessionStart hook) does symlink/dir repair only and
+# skips the settings.json re-merge, so startup stays cheap and never rewrites
+# settings.json behind the user's back. Idempotent and safe to run repeatedly.
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CLAUDE_DIR="${HOME}/.claude"
