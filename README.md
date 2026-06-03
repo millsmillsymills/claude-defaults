@@ -347,6 +347,9 @@ claude-defaults/
 ├── settings.json                   # Global settings template (merged into ~/.claude/settings.json)
 ├── mcp-template.json               # MCP server config template
 ├── claude-md-template.md           # Global CLAUDE.md template (Python/TS/Rust/Go/Bash/GH Actions)
+├── .github/
+│   └── workflows/
+│       └── test.yml                # CI: ruff lint/format + shell test suite
 ├── scripts/
 │   ├── install.sh                  # Hybrid installer (--dry-run, --force, components)
 │   ├── uninstall.sh                # Reverse install, restore backup
