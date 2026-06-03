@@ -29,10 +29,6 @@ BACKUP_DIR="${CLAUDE_DIR}/backups/pre-claude-defaults-${BACKUP_TS}"
 # captured by the backup snapshot; this manifest covers what that can't.
 MANIFEST="${CLAUDE_DIR}/.claude-defaults-install.manifest"
 
-# shellcheck source=scripts/hook-events.sh
-. "$(dirname "$0")/hook-events.sh"
-hook_events_load
-
 usage() {
   echo "Usage: $0 [--dry-run] [--force] [component...]"
   echo ""
@@ -134,6 +130,50 @@ install_symlink() {
   ok "$desc -> $dst"
 }
 
+# Merge an existing settings.json with the repo template into `out`.
+# Per hook event, drop the groups that are ours (any command referencing
+# /.claude/hooks/) and append the template's groups, then unique:
+# - Dropping ours-then-replacing strands no renamed hook: a stale group calling
+#   the old name is ours, so it's removed and the template's new-name group
+#   takes its place (a plain concat + unique kept both as distinct objects).
+# - User-authored groups (and whole events only the user has) survive untouched.
+# - The final unique collapses identical groups, including the prompt-type Stop
+#   hook that carries no command for the ours-test to match.
+# The merge is stable on re-run (idempotent), which is what lets the caller
+# treat a byte-identical result as "no change needed".
+merge_settings() {
+  local existing="$1" out="$2"
+  jq -s '
+        .[0] as $existing | .[1] as $new |
+        $existing * $new |
+        .permissions.deny = (
+            ($existing.permissions.deny // []) +
+            ($new.permissions.deny // []) | unique
+        ) |
+        .permissions.allow = (
+            ($existing.permissions.allow // []) +
+            ($new.permissions.allow // []) | unique
+        ) |
+        .hooks = (
+            ($existing.hooks // {}) as $eh |
+            ($new.hooks // {}) as $nh |
+            reduce ((($eh | keys) + ($nh | keys)) | unique[]) as $event ({};
+                .[$event] = (
+                    [ ($eh[$event] // [])[]
+                      | select(
+                          [ .hooks[]?.command // "" ]
+                          | map(contains("/.claude/hooks/")) | any | not
+                        )
+                    ]
+                    + ($nh[$event] // [])
+                    | unique
+                )
+            )
+        )
+    ' "$existing" "${REPO_DIR}/settings.json" >"$out"
+  jq . <"$out" >/dev/null # validate before the caller renames it into place
+}
+
 install_settings() {
   log "--- settings ---"
   local target="${CLAUDE_DIR}/settings.json"
@@ -148,113 +188,69 @@ install_settings() {
   fi
 
   mkdir -p "$CLAUDE_DIR"
-  # Idempotency: if the existing settings.json already wires our hooks under
-  # the canonical hook events, treat as already-installed (no re-backup, no
-  # re-merge). --force bypasses this check to support re-merging after
-  # settings.json template changes.
-  #
-  # Narrow scope from the broad `.. | objects | .command?`
-  # walk to specific hook-event paths. The previous walk could false-positive
-  # on any nested object with a `.command` field referencing a hook script
-  # name (e.g. inside a comment field, or in an unrelated config section).
-  #
-  # Inspect the full canonical event set (shared via
-  # hook-events.sh), not just PreToolUse/PostToolUse/SessionEnd. A Stop-only
-  # partial install was previously undetected, so a re-merge duplicated the
-  # Stop hook. Match any repo hook-script basename under any event.
-  if [ "$FORCE" != "1" ] && [ -f "$target" ] && command -v jq >/dev/null 2>&1; then
-    local hook_re=""
-    for h in "${REPO_DIR}"/hooks/*.sh "${REPO_DIR}"/hooks/*.py; do
-      [ -f "$h" ] || continue
-      local b
-      b=$(basename "$h")
-      hook_re="${hook_re:+${hook_re}|}${b//./\\.}"
-    done
-    if [ -n "$hook_re" ] && jq -r '
-            ($ARGS.positional) as $events |
-            [ $events[] as $e |
-                (.hooks[$e] // [])[]?.hooks[]? | (.command // .prompt) ]
-            | .[] | select(. != null)
-        ' --args "${HOOK_EVENTS[@]}" <"$target" 2>/dev/null |
-      grep -qE "$hook_re"; then
-      ok "$target (already merged with claude-defaults hooks — skipping)"
-      return
-    fi
-  fi
-  # Snapshot whatever is at the target (regular file or symlink) into the
-  # backup, then merge its content with the template. A symlink is resolved
-  # to its real file first -- moving the link instead would break a relative
-  # target and silently drop the user's settings.
-  local existing=""
+
+  # Resolve the current settings content (following a symlink) without mutating
+  # anything yet, so we can compute the prospective merge and skip only when it
+  # would change nothing. "Already installed" then means "up to date" rather
+  # than merely "our hooks are present" -- so a later template edit (a new
+  # permission or hook) propagates on a plain re-run instead of being silently
+  # swallowed by a presence check that can never deliver a template change.
+  local current="" is_symlink=0
   if [ -L "$target" ]; then
-    ensure_backup_dir
-    local resolved
-    resolved=$(resolve_link "$target")
-    if [ -n "$resolved" ] && [ -f "$resolved" ]; then
-      cp -p "$resolved" "${BACKUP_DIR}/$(basename "$target")"
-      existing="${BACKUP_DIR}/$(basename "$target")"
-      log "backed up (resolved symlink): $target -> ${BACKUP_DIR}/$(basename "$target")"
-      # Record that the original was a symlink so uninstall can warn that
-      # it restored content as a plain file rather than recreating the link.
-      manifest_add "wassymlink ${target} ${resolved}"
-    fi
-    rm -f "$target"
+    is_symlink=1
+    current=$(resolve_link "$target")
+    { [ -n "$current" ] && [ -f "$current" ]; } || current=""
   elif [ -f "$target" ]; then
-    backup_existing "$target"
-    existing="${BACKUP_DIR}/$(basename "$target")"
+    current="$target"
   fi
 
-  # Hook merge: per event, drop the existing groups that are ours (any command
-  # referencing /.claude/hooks/) and append the template's groups, then unique.
-  # - Dropping ours-then-replacing strands no renamed hook: a stale group calling
-  #   the old name is ours, so it's removed and the template's new-name group
-  #   takes its place (a plain concat + unique kept both as distinct objects).
-  # - User-authored groups (and whole events only the user has) are not ours, so
-  #   they survive untouched.
-  # - The final unique collapses identical groups, including the prompt-type Stop
-  #   hook that carries no command for the ours-test to match.
-  if [ -n "$existing" ] && command -v jq >/dev/null 2>&1; then
-    jq -s '
-            .[0] as $existing | .[1] as $new |
-            $existing * $new |
-            .permissions.deny = (
-                ($existing.permissions.deny // []) +
-                ($new.permissions.deny // []) | unique
-            ) |
-            .permissions.allow = (
-                ($existing.permissions.allow // []) +
-                ($new.permissions.allow // []) | unique
-            ) |
-            .hooks = (
-                ($existing.hooks // {}) as $eh |
-                ($new.hooks // {}) as $nh |
-                reduce ((($eh | keys) + ($nh | keys)) | unique[]) as $event ({};
-                    .[$event] = (
-                        [ ($eh[$event] // [])[]
-                          | select(
-                              [ .hooks[]?.command // "" ]
-                              | map(contains("/.claude/hooks/")) | any | not
-                            )
-                        ]
-                        + ($nh[$event] // [])
-                        | unique
-                    )
-                )
-            )
-        ' "$existing" "${REPO_DIR}/settings.json" >"${target}.tmp"
-    # Validate before atomic rename
-    jq . <"${target}.tmp" >/dev/null
-    mv "${target}.tmp" "$target"
-    ok "merged settings into $target"
-  elif [ -n "$existing" ]; then
-    warn "jq not installed; cannot merge. Install jq first."
-    cp "${REPO_DIR}/settings.json" "$target"
-    ok "settings copied (no merge): $target"
-  else
-    cp "${REPO_DIR}/settings.json" "$target"
+  # Without jq we can't compute a merge; refuse rather than clobber existing
+  # settings (or write a non-canonical fresh copy), and say what's needed.
+  if ! command -v jq >/dev/null 2>&1; then
+    warn "jq not installed; cannot install settings into $target. Install jq and re-run."
+    return
+  fi
+
+  # Fresh install: merge against an empty document so the file lands in the same
+  # canonical (sorted/deduped) form a re-merge produces -- otherwise the first
+  # later re-run would rewrite it just to sort, defeating the no-op check below.
+  if [ -z "$current" ]; then
+    local empty="${target}.empty"
+    printf '{}' >"$empty"
+    merge_settings "$empty" "$target"
+    rm -f "$empty"
     manifest_add "created ${target} $(file_sha256 "$target")"
     ok "settings -> $target"
+    return
   fi
+
+  local merged="${target}.tmp"
+  merge_settings "$current" "$merged"
+
+  # Content-aware idempotency: a true no-op (merge byte-identical to current)
+  # skips with no backup and no rewrite. --force always rewrites.
+  if [ "$FORCE" != "1" ] && cmp -s "$merged" "$current"; then
+    rm -f "$merged"
+    ok "$target (already up to date -- skipping)"
+    return
+  fi
+
+  # The merge changes something (or --force): snapshot the original first. A
+  # symlink is resolved to its real file -- moving the link instead would break
+  # a relative target and silently drop the user's settings.
+  if [ "$is_symlink" = "1" ]; then
+    ensure_backup_dir
+    cp -p "$current" "${BACKUP_DIR}/$(basename "$target")"
+    log "backed up (resolved symlink): $target -> ${BACKUP_DIR}/$(basename "$target")"
+    # Record that the original was a symlink so uninstall can warn that it
+    # restored content as a plain file rather than recreating the link.
+    manifest_add "wassymlink ${target} ${current}"
+    rm -f "$target"
+  else
+    backup_existing "$target"
+  fi
+  mv "$merged" "$target"
+  ok "merged settings into $target"
 }
 
 install_mcp() {
