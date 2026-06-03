@@ -17,6 +17,7 @@ truth.
 
 Compatible with Python 3.9+ (relies on PEP 563 deferred annotations).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -54,7 +55,7 @@ def _sanitize(s: str) -> str:
 def _parse_mcp_server(tool: str) -> str | None:
     if not tool.startswith("mcp__"):
         return None
-    rest = tool[len("mcp__"):]
+    rest = tool[len("mcp__") :]
     sep = rest.find("__")
     if sep <= 0:
         return None
@@ -62,7 +63,11 @@ def _parse_mcp_server(tool: str) -> str | None:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _call_id() -> str:
@@ -70,7 +75,9 @@ def _call_id() -> str:
 
 
 def _pair_key(session_id: str, tool_input: dict) -> str:
-    h = hashlib.sha256(json.dumps(tool_input, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+    h = hashlib.sha256(
+        json.dumps(tool_input, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:16]
     return f"{_sanitize(session_id)}-{h}"
 
 
@@ -132,7 +139,9 @@ def _maybe_rotate(log_dir: Path, log_file: str) -> None:
             return
         if size < _rotate_bytes():
             return
-        rotate_script = Path(os.path.dirname(os.path.realpath(__file__))).parent / "log-rotate.sh"
+        rotate_script = (
+            Path(os.path.dirname(os.path.realpath(__file__))).parent / "log-rotate.sh"
+        )
         if not rotate_script.is_file():
             return
         subprocess.run(
@@ -170,8 +179,12 @@ def main() -> int:
     # Filename uses UTC to match the ts field. Otherwise rows
     # written near local midnight land in a file dated for the previous
     # local day while the ts field is the next UTC day.
-    log_file = str(log_dir / f"tool-calls-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.jsonl")
-    pair_path = os.path.join(_temp_dir(), f"claude-tool-{_pair_key(session_id, tool_input)}")
+    log_file = str(
+        log_dir / f"tool-calls-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.jsonl"
+    )
+    pair_path = os.path.join(
+        _temp_dir(), f"claude-tool-{_pair_key(session_id, tool_input)}"
+    )
 
     # Generate call_id ONCE per invocation. For pre, write it into the pair
     # file alongside the start time so post can read it back and the pre-row's
