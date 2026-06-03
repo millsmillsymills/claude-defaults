@@ -14,6 +14,7 @@ guard ran on a real command and let it through unchecked, so that case is
 logged loudly to ``logs/hook-errors.log`` and stderr (mirroring run-hook.sh) --
 a never-enforced security matcher must not fail silently.
 """
+
 from __future__ import annotations
 
 import json
@@ -252,11 +253,14 @@ def scan(cmd: str, depth: int = 0) -> str | None:
 
 def _log_scan_error(exc: BaseException) -> None:
     """Record a scan crash to a durable log and stderr before failing open."""
-    print(
-        "WARNING: safety-block.py scan crashed; destructive-command guard NOT "
-        f"enforced and the command was ALLOWED unchecked ({exc!r}).",
-        file=sys.stderr,
-    )
+    try:
+        print(
+            "WARNING: safety-block.py scan crashed; destructive-command guard NOT "
+            f"enforced and the command was ALLOWED unchecked ({exc!r}).",
+            file=sys.stderr,
+        )
+    except OSError:
+        pass  # a dead stderr must never override the fail-open contract
     try:
         log_dir = Path.home() / ".claude" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -272,7 +276,9 @@ def main() -> int:
         data = json.load(sys.stdin)
     except (json.JSONDecodeError, UnicodeDecodeError):
         return 0  # malformed input: nothing to scan, fail open quietly
-    cmd = data.get("tool_input", {}).get("command", "") if isinstance(data, dict) else ""
+    cmd = (
+        data.get("tool_input", {}).get("command", "") if isinstance(data, dict) else ""
+    )
     if not isinstance(cmd, str) or not cmd:
         return 0
     try:
