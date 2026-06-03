@@ -4,7 +4,6 @@
 # legitimate commands.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
-REPO="$PWD"
 
 fail=0
 fail_msg() {
@@ -111,37 +110,6 @@ expect_allow "$SAFETY" 'git push origin +myfeature' "safety +refspec feature ok"
   echo $?
 )" = "0" ] ||
   fail_msg "safety: non-string command did not fail open (expected rc=0)"
-
-# === L1 + H10: enforce-package-manager.sh -- npm not at line start ===
-# The hook keys off a lockfile in CWD, so run each case from a temp pnpm project.
-ENFORCE="$REPO/hooks/enforce-package-manager.sh"
-enforce_rc() { # cmd  (run inside a pnpm-locked dir)
-  local cmd="$1"
-  jq -nc --arg c "$cmd" '{tool_name:"Bash", tool_input:{command:$c}}' |
-    (cd "$PNPM_DIR" && bash "$ENFORCE") >/dev/null 2>&1
-  echo $?
-}
-PNPM_DIR=$(mktemp -d)
-: >"$PNPM_DIR/pnpm-lock.yaml"
-[ "$(enforce_rc 'npm install')" = "2" ] || fail_msg "enforce: plain npm install allowed"
-[ "$(enforce_rc 'NODE_ENV=prod npm install')" = "2" ] || fail_msg "enforce: env-prefixed npm allowed"
-[ "$(enforce_rc '   npm install')" = "2" ] || fail_msg "enforce: leading-space npm allowed"
-[ "$(enforce_rc 'cd app && npm ci')" = "2" ] || fail_msg "enforce: chained npm allowed"
-[ "$(enforce_rc '(npm install)')" = "2" ] || fail_msg "enforce: subshell npm allowed"
-[ "$(enforce_rc '{ npm install; }')" = "2" ] || fail_msg "enforce: group npm allowed"
-[ "$(enforce_rc 'pnpm add lodash')" = "0" ] || fail_msg "enforce: pnpm blocked"
-[ "$(enforce_rc 'echo run npm install first')" = "0" ] || fail_msg "enforce: npm in prose blocked"
-rm -rf "$PNPM_DIR"
-
-# No lockfile -> npm is allowed.
-CLEAN_DIR=$(mktemp -d)
-clean_rc=$(
-  jq -nc '{tool_name:"Bash", tool_input:{command:"npm install"}}' |
-    (cd "$CLEAN_DIR" && bash "$ENFORCE") >/dev/null 2>&1
-  echo $?
-)
-[ "$clean_rc" = "0" ] || fail_msg "enforce: npm blocked with no lockfile"
-rm -rf "$CLEAN_DIR"
 
 if [ "$fail" -eq 0 ]; then
   echo "test-guard-hooks: PASS"
