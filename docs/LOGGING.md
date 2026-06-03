@@ -12,7 +12,7 @@ One JSON object per line. Two row types: `pre` (written before the tool runs) an
 {
   "ts": "2026-04-26T13:04:11.482Z",
   "session_id": "abc123",
-  "cwd": "/Users/mills/Desktop/Projects/foo",
+  "cwd": "/Users/you/projects/foo",
   "event": "pre",
   "call_id": "1714137851482000-7421",
   "tool": "Bash",
@@ -27,7 +27,7 @@ One JSON object per line. Two row types: `pre` (written before the tool runs) an
 {
   "ts": "2026-04-26T13:04:11.612Z",
   "session_id": "abc123",
-  "cwd": "/Users/mills/Desktop/Projects/foo",
+  "cwd": "/Users/you/projects/foo",
   "event": "post",
   "call_id": "1714137851482000-7421",
   "tool": "Bash",
