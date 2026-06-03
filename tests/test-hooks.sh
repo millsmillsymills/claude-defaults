@@ -33,6 +33,32 @@ rc=$?
 hooks/safety-block.py <tests/fixtures/tool-input-bash-rmrf.json
 rc=$?
 [ "$rc" -eq 2 ] || fail_msg "safety-block.py did not block rm -rf"
+# Malformed JSON and non-object payloads fail open quietly (no error log).
+printf 'not json{' | hooks/safety-block.py ||
+  fail_msg "safety-block.py did not fail open on malformed JSON"
+printf '[]' | hooks/safety-block.py ||
+  fail_msg "safety-block.py did not fail open on non-object JSON"
+[ -e "$HOME/.claude/logs/hook-errors.log" ] && fail_msg "safety-block.py logged on benign malformed input"
+# A scan crash must fail open LOUDLY: exit 0, warn on stderr, and leave a
+# durable hook-errors.log entry -- a never-enforced guard must not be silent.
+echo "  testing safety-block.py loud fail-open on scan crash"
+python3 - <<'PY' 2>/tmp/sb-stderr
+import importlib.util, io, sys
+spec = importlib.util.spec_from_file_location("sb", "hooks/safety-block.py")
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+def boom(_seg):
+    raise RuntimeError("boom")
+m._CHECKS = [(boom, "x")]
+sys.stdin = io.StringIO('{"tool_input":{"command":"echo hi"}}')
+sys.exit(m.main())
+PY
+rc=$?
+[ "$rc" -eq 0 ] || fail_msg "safety-block.py did not fail open on scan crash (rc=$rc)"
+[ -s /tmp/sb-stderr ] || fail_msg "safety-block.py scan crash not warned to stderr"
+grep -q "safety-block.py scan-error" "$HOME/.claude/logs/hook-errors.log" 2>/dev/null ||
+  fail_msg "safety-block.py scan crash not recorded in hook-errors.log"
+rm -f /tmp/sb-stderr "$HOME/.claude/logs/hook-errors.log"
 
 # === safety-warn.sh ===
 echo "  testing safety-warn.sh"
