@@ -43,9 +43,9 @@ The compound-engineering and pr-review-toolkit plugins already provide generic a
 | `/stats` | Homelab metrics summary |
 | `/benchmark` | Performance benchmarking against toolkit |
 | `/container-logs` | Docker compose specific |
-| `/find-files` | Thin wrapper around `fd` — Claude does this natively |
+| `/find-files` | Thin wrapper around `fd` -- Claude does this natively |
 | `/quick-fix` | Generic but minimal value over native Edit |
-| `/search-code` | Thin wrapper around `rg` — Claude does this natively |
+| `/search-code` | Thin wrapper around `rg` -- Claude does this natively |
 | `/settings-health` | Validates resurgent's specific settings hierarchy |
 | `/changelog` | Useful but lightweight; better as a per-project command |
 | `/review-homelab` | Multi-agent review tied to homelab agents |
@@ -54,9 +54,9 @@ The compound-engineering and pr-review-toolkit plugins already provide generic a
 
 If a pattern recurs across other projects, consider extracting the generic core into a global agent/skill/command and parameterizing the project-specific bits:
 
-- **`gen-test`** — could become a generic "infer test from production code" skill if conventions are project-detected
-- **`security-scan`** — bandit + safety pattern is generic; promote if the security-guidance plugin proves insufficient
-- **`dependency-audit`** — pip-audit / cargo deny / pnpm audit per detected language; could be a unified skill
-- **`compound-knowledge`** — compound-engineering plugin's `ce-compound` already covers this; nothing to promote
+- **`gen-test`** -- could become a generic "infer test from production code" skill if conventions are project-detected
+- **`security-scan`** -- bandit + safety pattern is generic; promote if the security-guidance plugin proves insufficient
+- **`dependency-audit`** -- pip-audit / cargo deny / pnpm audit per detected language; could be a unified skill
+- **`compound-knowledge`** -- compound-engineering plugin's `ce-compound` already covers this; nothing to promote
 
 When promoting, follow `docs/HOOKS.md`'s "Adding your own hook" pattern but for the appropriate component type.
