@@ -1,9 +1,0 @@
-{
-  "reviewer": "project-standards",
-  "run_id": "20260426-141420-9db4ced2",
-  "findings": [
-    {"id": "PS-1", "severity": "medium", "confidence": 0.97, "title": "log-tool-calls.sh uses set +e instead of set -euo pipefail", "file": "hooks/log-tool-calls.sh", "line": 10, "rule": "claude-md-template.md Bash section"},
-    {"id": "PS-2", "severity": "low", "confidence": 0.92, "title": "Test scripts and common.sh open with set -uo pipefail (missing -e)", "files": ["tests/run-all.sh", "tests/test-redaction.sh", "tests/test-install.sh", "tests/test-settings-valid.sh", "tests/test-hooks.sh", "hooks/lib/common.sh"], "tracked_in": "#15"},
-    {"id": "PS-3", "severity": "low", "confidence": 0.88, "title": "Issue-number comments in Python and Bash source violate comments policy (rot-prone)", "files": ["hooks/lib/log_tool_call.py:108,123,209", "scripts/install.sh:121"], "rule": "claude-md-template.md Comments policy"}
-  ]
-}
