@@ -254,10 +254,10 @@ Use plain, factual language. A bug fix is a bug fix, not a "critical stability i
 
 ## Local infrastructure references
 
-This Claude Code installation is managed from `~/Desktop/Projects/claude-defaults/`. For details on what hooks fire and what gets logged:
+This Claude Code installation is managed from a local `claude-defaults` checkout. For details on what hooks fire and what gets logged:
 
-- **Hooks reference:** `~/Desktop/Projects/claude-defaults/docs/HOOKS.md`
-- **Logging schema and queries:** `~/Desktop/Projects/claude-defaults/docs/LOGGING.md`
+- **Hooks reference:** `docs/HOOKS.md` in that checkout
+- **Logging schema and queries:** `docs/LOGGING.md` in that checkout
 - **Tool-call log files:** `~/.claude/logs/tool-calls-YYYY-MM-DD.jsonl`
 
 Per-project overrides go in the project's own `.claude/settings.local.json` and `CLAUDE.md`.
