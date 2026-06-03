@@ -239,7 +239,11 @@ echo "$out" | grep -q "already up to date" || fail_msg "#71: unchanged re-run di
 cmp -s "$TEST_HOME8/before.json" "$TEST_HOME8/.claude/settings.json" || fail_msg "#71: no-op re-run rewrote settings.json"
 
 # Propagate: drop a template deny entry to mimic a stale install predating a
-# template addition; a plain re-run must restore it (not silently skip).
+# template addition; a plain re-run must restore it (not silently skip). Guard
+# that the template still ships this entry, so the test fails loudly rather than
+# silently degrading to a no-op if the template ever drops it.
+tmpl_has=$(jq -r '[.permissions.deny[]? | select(. == "Bash(rm -rf *)")] | length' "$REPO_DIR/settings.json")
+[ "$tmpl_has" = "1" ] || fail_msg "#71: template no longer ships 'Bash(rm -rf *)'; update the drift test"
 jq 'del(.permissions.deny[] | select(. == "Bash(rm -rf *)"))' \
   "$TEST_HOME8/.claude/settings.json" >"$TEST_HOME8/.claude/settings.json.t"
 mv "$TEST_HOME8/.claude/settings.json.t" "$TEST_HOME8/.claude/settings.json"
@@ -287,6 +291,82 @@ if [ "$(id -u)" -ne 0 ]; then
 else
   echo "  SKIP #55 restore-failure test (running as root; mode 000 is bypassed)"
 fi
+
+# #87-jq: with jq absent, settings install must refuse -- warn, exit 0, and
+# create nothing (never clobber existing settings or write a non-canonical
+# copy). Build a PATH mirroring the real one minus jq so the in-function guard
+# fires while every other tool install.sh needs stays available.
+TEST_HOME11=$(mktemp -d -t claude-defaults-nojq.XXXXXX)
+export HOME="$TEST_HOME11"
+mkdir -p "$TEST_HOME11/.claude"
+nojq_bin=$(mktemp -d -t claude-defaults-nojqbin.XXXXXX)
+IFS=:
+for d in $PATH; do
+  [ -d "$d" ] || continue
+  for f in "$d"/*; do
+    [ -e "$f" ] || continue
+    b=$(basename "$f")
+    [ "$b" = "jq" ] && continue
+    [ -e "$nojq_bin/$b" ] || ln -s "$f" "$nojq_bin/$b" 2>/dev/null
+  done
+done
+unset IFS
+out=$(PATH="$nojq_bin" bash "$REPO_DIR/scripts/install.sh" settings 2>&1)
+rc=$?
+[ "$rc" -eq 0 ] || fail_msg "#87-jq: install exited $rc with jq absent (expected 0)"
+echo "$out" | grep -q "cannot install settings" || fail_msg "#87-jq: no refusal warning when jq absent"
+[ -e "$TEST_HOME11/.claude/settings.json" ] && fail_msg "#87-jq: settings.json created despite jq absent"
+rm -rf "$nojq_bin"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME11"
+
+# #87-sym: a symlinked settings.json already byte-identical to its own merge is
+# a true no-op -- the link must survive (not be converted to a plain file) and
+# no backup is taken. Produce canonical content via a fresh install, then point
+# a symlink at it and re-run.
+TEST_HOME12=$(mktemp -d -t claude-defaults-symnoop.XXXXXX)
+export HOME="$TEST_HOME12"
+mkdir -p "$TEST_HOME12/.claude"
+bash "$REPO_DIR/scripts/install.sh" settings >/dev/null || fail_msg "#87-sym: seed install failed"
+mv "$TEST_HOME12/.claude/settings.json" "$TEST_HOME12/.claude/real-settings.json"
+ln -s "$TEST_HOME12/.claude/real-settings.json" "$TEST_HOME12/.claude/settings.json"
+sym_before=$(find "$TEST_HOME12/.claude/backups" -maxdepth 1 -name 'pre-claude-defaults-*' 2>/dev/null | wc -l)
+out=$(bash "$REPO_DIR/scripts/install.sh" settings 2>&1) || fail_msg "#87-sym: re-install over symlink failed"
+echo "$out" | grep -q "already up to date" || fail_msg "#87-sym: up-to-date symlink did not skip as a no-op"
+[ -L "$TEST_HOME12/.claude/settings.json" ] || fail_msg "#87-sym: no-op converted the symlink into a plain file"
+sym_after=$(find "$TEST_HOME12/.claude/backups" -maxdepth 1 -name 'pre-claude-defaults-*' 2>/dev/null | wc -l)
+[ "$sym_before" = "$sym_after" ] || fail_msg "#87-sym: no-op symlink re-run created a backup"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME12"
+
+# #87-stop: a stale install carrying only the prompt-type Stop hook must not
+# duplicate it on re-merge -- the unique collapse keeps the Stop group at one.
+TEST_HOME13=$(mktemp -d -t claude-defaults-stopdedup.XXXXXX)
+export HOME="$TEST_HOME13"
+mkdir -p "$TEST_HOME13/.claude"
+jq '{hooks: {Stop: .hooks.Stop}}' "$REPO_DIR/settings.json" >"$TEST_HOME13/.claude/settings.json"
+bash "$REPO_DIR/scripts/install.sh" settings >/dev/null || fail_msg "#87-stop: install over Stop-only settings failed"
+got=$(jq '[.hooks.Stop[]?] | length' "$TEST_HOME13/.claude/settings.json")
+[ "$got" = "1" ] || fail_msg "#87-stop: Stop hook group duplicated on re-merge (count=$got)"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME13"
+
+# #87-force: --force over a byte-identical file must still take the rewrite path
+# (backup + "merged settings"), never the content-aware skip, and must not
+# duplicate entries.
+TEST_HOME14=$(mktemp -d -t claude-defaults-forcenoop.XXXXXX)
+export HOME="$TEST_HOME14"
+mkdir -p "$TEST_HOME14/.claude"
+bash "$REPO_DIR/scripts/install.sh" settings >/dev/null || fail_msg "#87-force: seed install failed"
+before=$(jq '[.hooks.PreToolUse[]?.hooks[]?] | length' "$TEST_HOME14/.claude/settings.json")
+out=$(bash "$REPO_DIR/scripts/install.sh" --force settings 2>&1) || fail_msg "#87-force: --force re-install failed"
+echo "$out" | grep -q "merged settings" || fail_msg "#87-force: --force on identical file skipped instead of rewriting"
+echo "$out" | grep -q "already up to date" && fail_msg "#87-force: --force took the no-op skip path"
+ls -d "$TEST_HOME14/.claude/backups/pre-claude-defaults-"* >/dev/null 2>&1 || fail_msg "#87-force: --force rewrite created no backup"
+after=$(jq '[.hooks.PreToolUse[]?.hooks[]?] | length' "$TEST_HOME14/.claude/settings.json")
+[ "$before" = "$after" ] || fail_msg "#87-force: PreToolUse entries grew $before -> $after under --force"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME14"
 
 if [ "$fail" -eq 0 ]; then
   echo "test-install: PASS"
