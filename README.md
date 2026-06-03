@@ -262,14 +262,27 @@ Official plugins maintained in the Claude Code repo. Install via the `claude-plu
 
 The code-simplifier agent inside pr-review-toolkit can also be targeted individually with `/pr-review-toolkit:review-pr simplify` for a focused simplification pass.
 
-### Compound Engineering (EveryInc/compound-engineering-plugin)
+### Matt Pocock's Skills (mattpocock/skills)
 
-Multi-agent workflows for planning and review.
+Composable skills targeting common agent failure modes -- alignment, debugging, planning, and architecture. Installed via the `skills` CLI rather than a Claude plugin marketplace:
+
+```
+npx skills@latest add mattpocock/skills
+```
+
+Then run `/setup-matt-pocock-skills` to configure per-repo settings (issue tracker, docs locations).
 
 | Skill | What it does | When to use it |
 |-------|-------------|----------------|
-| `/workflows:plan` | Turns feature descriptions into implementation plans with parallel research agents | Starting a feature that touches multiple files or components |
-| `/workflows:review` | Runs 15 specialized review agents in parallel (security, performance, architecture, style) | Before merging any significant PR -- catches what solo review misses |
+| `/diagnose` | Structured reproduce -> minimise -> hypothesise -> fix debugging loop | Hard bugs and performance regressions where the cause isn't obvious |
+| `/grill-with-docs` | Interview-style planning that sharpens domain language and updates CONTEXT.md / ADRs inline | Stress-testing a plan against the project's existing language and decisions |
+| `/improve-codebase-architecture` | Finds refactoring and deepening opportunities using project domain context | Consolidating tightly-coupled modules or making a codebase more testable |
+
+### Thermo-Nuclear Code Quality Review (cursor/plugins)
+
+A deliberately harsh maintainability review skill from Cursor's team kit. It hunts for "code judo" -- behavior-preserving restructurings that dramatically simplify -- and enforces seven hard rules (files under 1,000 lines, no scattered special-casing, no magical abstractions, no thin wrappers, no boundary leaks). Approval requires no missed simplification opportunities, no unjustified file growth, and no architectural boundary leaks.
+
+Use it for deep audits and architecture challenges, not routine reviews. Source: [`cursor-team-kit/skills/thermo-nuclear-code-quality-review/SKILL.md`](https://github.com/cursor/plugins/blob/3347cbab5b54136f6fba0994c3a01a56f7fb7fca/cursor-team-kit/skills/thermo-nuclear-code-quality-review/SKILL.md).
 
 ---
 
