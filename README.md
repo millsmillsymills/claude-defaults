@@ -133,7 +133,7 @@ Hooks are shell commands (or LLM prompts) that fire at specific points in Claude
 
 This is more powerful than system prompt instructions alone because hooks fire at specific, contextual moments. An instruction in your CLAUDE.md saying "never use rm -rf" can be forgotten or overridden by context pressure. A PreToolUse hook that blocks `rm -rf` fires every single time, with the error message right at the point of decision.
 
-Hooks are not a security boundary -- a prompt injection can work around them. They are structured prompt injection at opportune times: intercepting tool calls, injecting context, blocking known-bad patterns, and steering agent behavior. Guardrails, not walls.
+Hooks intercept tool calls, inject context, block known-bad patterns, and steer agent behavior at the moment it matters. But they aren't a security boundary -- a prompt injection can work around them. Guardrails, not walls.
 
 In practice, use them to:
 
