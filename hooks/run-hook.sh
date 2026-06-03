@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Resilient hook dispatcher. settings.json routes every command-type hook
-# through this wrapper as `run-hook.sh <hook-name> [args...]`, so a missing
-# directory or a stale/renamed hook script can never surface a
-# "/bin/sh: ...: No such file or directory" failure. See docs/HOOKS.md.
+# Resilient hook dispatcher: settings.json routes every command hook through
+# this wrapper so a missing directory or a stale/renamed hook script can never
+# surface a "No such file or directory" failure. See docs/HOOKS.md.
 #
 # Invariant: never exit non-zero for OUR OWN plumbing errors -- only the real
 # hook's exit code (which may be 2 to block) is propagated. A hook that can't be
