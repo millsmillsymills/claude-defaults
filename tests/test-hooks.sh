@@ -66,7 +66,9 @@ rm -f /tmp/warn-stderr
 
 # === log-tool-calls.sh ===
 echo "  testing log-tool-calls.sh"
-today=$(date +%Y-%m-%d)
+# Writer names log files by UTC date; match it so the suite doesn't flake
+# when local time and UTC fall on different calendar days.
+today=$(date -u +%Y-%m-%d)
 log_file="$TEST_HOME/.claude/logs/tool-calls-${today}.jsonl"
 bash hooks/log-tool-calls.sh pre <tests/fixtures/tool-input-bash-safe.json
 [ -f "$log_file" ] || fail_msg "log-tool-calls.sh did not create log"
