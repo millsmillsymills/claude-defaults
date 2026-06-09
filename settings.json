@@ -137,6 +137,10 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/run-hook.sh safety-block.py"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/run-hook.sh warn-merge-after-pr.sh"
           }
         ]
       },
@@ -176,6 +180,10 @@
           {
             "type": "prompt",
             "prompt": "Review the assistant's final response. Reject it if the assistant is rationalizing incomplete work. Common patterns: claiming issues are 'pre-existing' or 'out of scope' to avoid fixing them, saying there are 'too many issues' to address all of them, deferring work to a 'follow-up' that was not requested, listing problems without fixing them and calling that done, or skipping test/lint failures with excuses. If the response shows any of these patterns, respond {\"ok\": false, \"reason\": \"You are rationalizing incomplete work. [specific issue]. Go back and finish.\"}. If the work is genuinely complete, respond {\"ok\": true}."
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/run-hook.sh stop-check-clean-repo.sh"
           }
         ]
       }
