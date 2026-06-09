@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Convention hooks. Hooks A (warn-merge-after-pr.sh) and B
-# (stop-check-clean-repo.sh) are covered here; the Hook D (safety-warn.sh JSON)
-# section is added in the following commit. Each case synthesizes the hook's
-# stdin JSON and asserts on exit code / stdout. A throwaway HOME keeps marker
-# files out of the real ~/.claude.
+# Convention hooks. Hooks A (warn-merge-after-pr.sh), B
+# (stop-check-clean-repo.sh), and D (safety-warn.sh JSON) are covered here. Each
+# case synthesizes the hook's stdin JSON and asserts on exit code / stdout. A
+# throwaway HOME keeps marker files out of the real ~/.claude.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
@@ -103,6 +102,20 @@ tr_read="$(mk_transcript Read)"
 # non-repo cwd -> no nudge.
 nonrepo="$(mktemp -d)"
 [ "$(run_b "$nonrepo" B4 "$tr_edit")" = 0 ] || fail_msg "B: non-repo cwd should not nudge"
+
+# === Hook D: safety-warn.sh now emits JSON additionalContext (not stderr) ===
+D="hooks/safety-warn.sh"
+
+run_d() { # file_path -> stdout
+  jq -nc --arg f "$1" '{tool_name:"Write",tool_input:{file_path:$f}}' | bash "$D"
+}
+
+out=$(run_d '/tmp/project/.env')
+printf '%s' "$out" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null 2>&1 ||
+  fail_msg "D: sensitive path did not emit additionalContext"
+
+out=$(run_d '/tmp/project/notes.txt')
+[ -z "$out" ] || fail_msg "D: benign path should emit nothing"
 
 echo "convention-hooks: checks ran"
 [ "$fail" -eq 0 ] || {
