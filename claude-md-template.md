@@ -250,6 +250,17 @@ Describe what the code does now -- not discarded approaches, prior iterations, o
 
 Use plain, factual language. A bug fix is a bug fix, not a "critical stability improvement." Avoid: critical, crucial, essential, significant, comprehensive, robust, elegant.
 
+### PR-session discipline
+
+Across all projects, commit local work via PRs when the work suits the repo, and
+leave the local repo clean before ending a turn — no dangling uncommitted work.
+
+- Never run `gh pr merge` in the same session that ran `gh pr create`. Authoring
+  and merging are separate sessions.
+- The review/merge cycle is its own session: a fresh session runs
+  `/pr-review-toolkit:review-pr` on open PRs, merges, and files follow-up issues.
+- Do not work issues in the same session as the review cycle.
+
 ---
 
 ## Local infrastructure references

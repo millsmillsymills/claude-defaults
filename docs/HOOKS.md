@@ -66,7 +66,7 @@ Parses the command with `shlex` and matches patterns against the tokens, so a pa
 
 ### `safety-warn.sh` (PreToolUse Edit\|Write, exit 0)
 
-Soft warning on sensitive paths. Stderr is shown to Claude as a nudge; the Edit/Write proceeds.
+Soft warning on sensitive paths. The advisory is emitted as JSON `additionalContext` on stdout (exit 0, non-blocking); the Edit/Write proceeds. Exit-0 **stderr** is written only to the debug log and is never shown to Claude, so warnings must use the JSON `additionalContext` channel.
 
 Patterns warned:
 
@@ -76,6 +76,22 @@ Patterns warned:
 - `*.pem`, `*.key`, `*id_rsa*`, `*.p12`, `*.pfx`, `*.gpg`
 
 Hard reads/writes to `~/.ssh/`, `~/.aws/`, `~/.gnupg/`, etc. are blocked by the deny rules in `settings.json` regardless of this hook.
+
+### `warn-merge-after-pr.sh` (PreToolUse Bash, exit 0)
+
+Non-blocking advisory for the create/merge session-separation convention. On `gh
+pr create` it writes a per-session marker `~/.claude/state/pr-created-<session_id>`;
+on a later `gh pr merge` in the same session it emits JSON `additionalContext`
+reminding that merges belong in a separate session. Never blocks. Review-cycle
+sessions (no `gh pr create`) are silent. **Test:** `bash tests/test-convention-hooks.sh`.
+
+### `stop-check-clean-repo.sh` (Stop, command, exit 2 once)
+
+Nudges to commit/clean up when a session leaves the cwd repo dirty. Gated: only
+fires when cwd is a git work tree, the tree is dirty, AND the session transcript
+shows a mutating tool (Edit/Write/MultiEdit/NotebookEdit). Loop-safe via a
+per-session marker `~/.claude/state/clean-nudged-<session_id>` (fires at most
+once; no dependency on `stop_hook_active`). **Test:** `bash tests/test-convention-hooks.sh`.
 
 ### `log-tool-calls.sh pre|post` (PreToolUse `*` and PostToolUse `*`)
 
