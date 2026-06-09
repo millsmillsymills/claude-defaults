@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Convention hooks. Hook A (warn-merge-after-pr.sh) is covered here; the Hook B
-# (stop-check-clean-repo.sh) and Hook D (safety-warn.sh JSON) sections are added
-# in the following commits. Each case synthesizes the hook's stdin JSON and
-# asserts on exit code / stdout. A throwaway HOME keeps marker files out of the
-# real ~/.claude.
+# Convention hooks. Hooks A (warn-merge-after-pr.sh) and B
+# (stop-check-clean-repo.sh) are covered here; the Hook D (safety-warn.sh JSON)
+# section is added in the following commit. Each case synthesizes the hook's
+# stdin JSON and asserts on exit code / stdout. A throwaway HOME keeps marker
+# files out of the real ~/.claude.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
@@ -55,7 +55,56 @@ run_a 'gh pr merge 12 --squash' 'S2'
 run_a 'echo "gh pr create -t foo"' 'S4'
 [ -f "$TMPHOME/.claude/state/pr-created-S4" ] && fail_msg "A: quoted create set a marker"
 
-echo "convention-hooks A: checks ran"
+# === Hook B: stop-check-clean-repo.sh ===
+B="hooks/stop-check-clean-repo.sh"
+
+mk_repo() { # -> echoes a fresh repo path with one commit
+  local r
+  r="$(mktemp -d)"
+  git -C "$r" init -q
+  git -C "$r" config user.email t@example.com
+  git -C "$r" config user.name tester
+  echo one >"$r/file"
+  git -C "$r" add file
+  git -C "$r" commit -qm init
+  printf '%s' "$r"
+}
+
+mk_transcript() { # tool_name -> echoes a transcript path containing one tool_use
+  local t
+  t="$(mktemp)"
+  printf '%s\n' "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"$1\"}]}}" >"$t"
+  printf '%s' "$t"
+}
+
+run_b() { # cwd sid transcript -> echoes exit code
+  jq -nc --arg c "$1" --arg s "$2" --arg t "$3" \
+    '{cwd:$c,session_id:$s,transcript_path:$t,hook_event_name:"Stop"}' |
+    HOME="$TMPHOME" bash "$B" >/dev/null 2>&1
+  echo $?
+}
+
+# dirty tree + a mutating-tool transcript -> nudge once (exit 2), then exit 0.
+repo="$(mk_repo)"
+echo two >>"$repo/file" # make it dirty
+tr_edit="$(mk_transcript Edit)"
+[ "$(run_b "$repo" B1 "$tr_edit")" = 2 ] || fail_msg "B: dirty+Edit should nudge (exit 2)"
+[ "$(run_b "$repo" B1 "$tr_edit")" = 0 ] || fail_msg "B: second call same session should allow stop (exit 0)"
+
+# clean tree -> no nudge.
+git -C "$repo" commit -qam two
+[ "$(run_b "$repo" B2 "$tr_edit")" = 0 ] || fail_msg "B: clean tree should not nudge"
+
+# dirty tree but read-only transcript (no mutating tool) -> no nudge.
+echo three >>"$repo/file"
+tr_read="$(mk_transcript Read)"
+[ "$(run_b "$repo" B3 "$tr_read")" = 0 ] || fail_msg "B: dirty+read-only should not nudge"
+
+# non-repo cwd -> no nudge.
+nonrepo="$(mktemp -d)"
+[ "$(run_b "$nonrepo" B4 "$tr_edit")" = 0 ] || fail_msg "B: non-repo cwd should not nudge"
+
+echo "convention-hooks: checks ran"
 [ "$fail" -eq 0 ] || {
   echo "FAILED: $fail check(s)" >&2
   exit 1
