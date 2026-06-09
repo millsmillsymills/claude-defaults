@@ -31,6 +31,9 @@ if is_pr_create; then
   : >"$marker" 2>/dev/null || true
 fi
 
+# A single command that both creates and merges (e.g. `gh pr create && gh pr
+# merge`) also matches here -- intentional: the advisory is conservative and
+# never blocks, so warning slightly too often is preferred to missing a case.
 if is_pr_merge && { [ -f "$marker" ] || is_pr_create; }; then
   msg="PR-workflow convention: this session created a PR. Merges belong in a separate review-cycle session, not the session that created the PR. Proceeding -- consider deferring the merge to a fresh session."
   jq -nc --arg c "$msg" \

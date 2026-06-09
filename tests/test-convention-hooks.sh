@@ -18,8 +18,8 @@ trap 'rm -rf "$TMPHOME"' EXIT
 # === Hook A: warn-merge-after-pr.sh ===
 A="hooks/warn-merge-after-pr.sh"
 A_RC=0
-_a_out=$(mktemp)
-trap 'rm -rf "$TMPHOME" "$_a_out"' EXIT
+# All temp files/dirs below live under $TMPHOME so the single trap cleans them.
+_a_out="$(mktemp "$TMPHOME/a_out.XXXXXX")"
 
 # run_a cmd sid — runs the hook, sets A_RC in the current shell, writes output
 # to $_a_out. Read output from that file instead of via command substitution so
@@ -59,7 +59,7 @@ B="hooks/stop-check-clean-repo.sh"
 
 mk_repo() { # -> echoes a fresh repo path with one commit
   local r
-  r="$(mktemp -d)"
+  r="$(mktemp -d "$TMPHOME/repo.XXXXXX")"
   git -C "$r" init -q
   git -C "$r" config user.email t@example.com
   git -C "$r" config user.name tester
@@ -71,7 +71,7 @@ mk_repo() { # -> echoes a fresh repo path with one commit
 
 mk_transcript() { # tool_name -> echoes a transcript path containing one tool_use
   local t
-  t="$(mktemp)"
+  t="$(mktemp "$TMPHOME/tr.XXXXXX")"
   printf '%s\n' "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"$1\"}]}}" >"$t"
   printf '%s' "$t"
 }
@@ -100,7 +100,7 @@ tr_read="$(mk_transcript Read)"
 [ "$(run_b "$repo" B3 "$tr_read")" = 0 ] || fail_msg "B: dirty+read-only should not nudge"
 
 # non-repo cwd -> no nudge.
-nonrepo="$(mktemp -d)"
+nonrepo="$(mktemp -d "$TMPHOME/nonrepo.XXXXXX")"
 [ "$(run_b "$nonrepo" B4 "$tr_edit")" = 0 ] || fail_msg "B: non-repo cwd should not nudge"
 
 # === Hook D: safety-warn.sh now emits JSON additionalContext (not stderr) ===

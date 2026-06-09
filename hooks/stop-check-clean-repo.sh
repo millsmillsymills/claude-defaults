@@ -27,6 +27,8 @@ git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 [ -n "$(git -C "$cwd" status --porcelain 2>/dev/null)" ] || exit 0
 
 [ -n "$transcript" ] && [ -f "$transcript" ] || exit 0
+# Conservative: matches the tool name anywhere in the transcript, not strictly
+# inside tool_use entries. A stray match only costs one extra nudge, never a miss.
 grep -Eq '"name":[[:space:]]*"(Edit|Write|MultiEdit|NotebookEdit)"' "$transcript" 2>/dev/null || exit 0
 
 : >"$nudged" 2>/dev/null || true
