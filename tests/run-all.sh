@@ -13,6 +13,7 @@ TESTS=(
   tests/test-convention-hooks.sh
   tests/test-hook-resilience.sh
   tests/test-install.sh
+  tests/test-doctor.sh
   tests/test-statusline.sh
 )
 
