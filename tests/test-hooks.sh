@@ -64,16 +64,18 @@ grep -q "RuntimeError: boom" "$HOME/.claude/logs/hook-errors.log" 2>/dev/null ||
 rm -f /tmp/sb-stderr "$HOME/.claude/logs/hook-errors.log"
 
 # === safety-warn.sh ===
+# Warns via JSON additionalContext on stdout (exit 0). Exit-0 stderr is
+# invisible to Claude, so a warning is non-empty stdout with additionalContext.
 echo "  testing safety-warn.sh"
-bash hooks/safety-warn.sh <tests/fixtures/tool-input-edit-env.json 2>/tmp/warn-stderr
+out=$(bash hooks/safety-warn.sh <tests/fixtures/tool-input-edit-env.json)
 rc=$?
 [ "$rc" -eq 0 ] || fail_msg "safety-warn.sh exit non-zero on .env"
-[ -s /tmp/warn-stderr ] || fail_msg "safety-warn.sh did not warn on .env"
-bash hooks/safety-warn.sh <tests/fixtures/tool-input-edit-normal.json 2>/tmp/warn-stderr
+printf '%s' "$out" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null 2>&1 ||
+  fail_msg "safety-warn.sh did not warn on .env"
+out=$(bash hooks/safety-warn.sh <tests/fixtures/tool-input-edit-normal.json)
 rc=$?
 [ "$rc" -eq 0 ] || fail_msg "safety-warn.sh exit non-zero on normal file"
-[ -s /tmp/warn-stderr ] && fail_msg "safety-warn.sh warned on normal file"
-rm -f /tmp/warn-stderr
+[ -z "$out" ] || fail_msg "safety-warn.sh warned on normal file"
 
 # safety-warn.sh broader sensitive-path coverage (beyond .env)
 echo "  testing safety-warn.sh broader sensitive paths"
@@ -85,13 +87,13 @@ warn_paths=(
   "/x/credentials.json"
 )
 for p in "${warn_paths[@]}"; do
-  jq -nc --arg f "$p" '{tool_input:{file_path:$f}}' | bash hooks/safety-warn.sh 2>/tmp/warn-stderr
-  [ -s /tmp/warn-stderr ] || fail_msg "safety-warn.sh did not warn on $p"
+  out=$(jq -nc --arg f "$p" '{tool_input:{file_path:$f}}' | bash hooks/safety-warn.sh)
+  printf '%s' "$out" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null 2>&1 ||
+    fail_msg "safety-warn.sh did not warn on $p"
 done
 # negative: an ordinary file must not warn
-jq -nc '{tool_input:{file_path:"/x/notes.txt"}}' | bash hooks/safety-warn.sh 2>/tmp/warn-stderr
-[ -s /tmp/warn-stderr ] && fail_msg "safety-warn.sh warned on ordinary file /x/notes.txt"
-rm -f /tmp/warn-stderr
+out=$(jq -nc '{tool_input:{file_path:"/x/notes.txt"}}' | bash hooks/safety-warn.sh)
+[ -z "$out" ] || fail_msg "safety-warn.sh warned on ordinary file /x/notes.txt"
 
 # === log-tool-calls.sh ===
 echo "  testing log-tool-calls.sh"
