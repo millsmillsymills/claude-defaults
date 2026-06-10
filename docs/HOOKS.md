@@ -101,6 +101,14 @@ Append a JSONL row per tool call to `~/.claude/logs/tool-calls-YYYY-MM-DD.jsonl`
 
 Gzip-rotate today's log if it exceeds `CLAUDE_LOG_ROTATE_BYTES` (default 100 MB), prune logs older than `CLAUDE_LOG_RETAIN_DAYS` days (default 365).
 
+### `cleanup-session-markers.sh` (SessionEnd)
+
+Removes this session's convention-hook markers (`pr-created-<session_id>`,
+`clean-nudged-<session_id>`) from `~/.claude/state` so they have a clear owner.
+The 7-day mtime sweep inside `warn-merge-after-pr.sh` / `stop-check-clean-repo.sh`
+remains only as a backstop for sessions that crash without a SessionEnd.
+**Test:** `bash tests/test-convention-hooks.sh`.
+
 ### Anti-rationalization Stop hook (`type: "prompt"`)
 
 Inline prompt-type hook in `settings.json`. Sends Claude's final response to a fast model that returns `{"ok": false, "reason": "..."}` or `{"ok": true}`. If rejected, Claude must continue.
