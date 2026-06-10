@@ -14,6 +14,9 @@ sid=$(printf '%s' "$input" | jq -r '.session_id // ""' 2>/dev/null || echo "")
 transcript=$(printf '%s' "$input" | jq -r '.transcript_path // ""' 2>/dev/null || echo "")
 [ -n "$cwd" ] || exit 0
 [ -n "$sid" ] || sid="unknown"
+# session_id is untrusted input; sanitize before it reaches a filesystem path
+# (mirrors _sanitize in hooks/lib/log_tool_call.py).
+sid="${sid//[^A-Za-z0-9_-]/_}"
 
 state_dir="${HOME}/.claude/state"
 mkdir -p "$state_dir" 2>/dev/null || true
@@ -31,7 +34,9 @@ git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 # inside tool_use entries. A stray match only costs one extra nudge, never a miss.
 grep -Eq '"name":[[:space:]]*"(Edit|Write|MultiEdit|NotebookEdit)"' "$transcript" 2>/dev/null || exit 0
 
-: >"$nudged" 2>/dev/null || true
+# If the marker can't be written, allow the stop rather than looping the nudge
+# every Stop -- the once-per-session guard above depends on this write landing.
+: >"$nudged" 2>/dev/null || exit 0
 cat >&2 <<'MSG'
 PR-workflow convention: this session left uncommitted changes in the working
 tree. Commit local work via a PR and clean up the repo before finishing, or

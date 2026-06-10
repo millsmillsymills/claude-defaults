@@ -13,6 +13,9 @@ cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null || ec
 sid=$(printf '%s' "$input" | jq -r '.session_id // ""' 2>/dev/null || echo "")
 [ -n "$cmd" ] || exit 0
 [ -n "$sid" ] || sid="unknown"
+# session_id is untrusted input; sanitize before it reaches a filesystem path
+# (mirrors _sanitize in hooks/lib/log_tool_call.py).
+sid="${sid//[^A-Za-z0-9_-]/_}"
 
 state_dir="${HOME}/.claude/state"
 mkdir -p "$state_dir" 2>/dev/null || true

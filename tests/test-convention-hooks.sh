@@ -54,6 +54,12 @@ run_a 'gh pr merge 12 --squash' 'S2'
 run_a 'echo "gh pr create -t foo"' 'S4'
 [ -f "$TMPHOME/.claude/state/pr-created-S4" ] && fail_msg "A: quoted create set a marker"
 
+# A path-traversal session_id must be sanitized: the marker stays inside the
+# state dir (unsafe chars -> _) and nothing escapes to a parent directory.
+run_a 'gh pr create -t x -b y' '../evil'
+[ -f "$TMPHOME/.claude/state/pr-created-___evil" ] || fail_msg "A: did not sanitize sid into state dir"
+[ ! -e "$TMPHOME/.claude/evil" ] || fail_msg "A: unsanitized sid escaped state dir"
+
 # === Hook B: stop-check-clean-repo.sh ===
 B="hooks/stop-check-clean-repo.sh"
 
