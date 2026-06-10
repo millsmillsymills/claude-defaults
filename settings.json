@@ -194,6 +194,10 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/run-hook.sh log-rotate.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/run-hook.sh cleanup-session-markers.sh"
           }
         ]
       }

@@ -19,7 +19,8 @@ sid="${sid//[^A-Za-z0-9_-]/_}"
 
 state_dir="${HOME}/.claude/state"
 mkdir -p "$state_dir" 2>/dev/null || true
-# Keep the dir from accumulating stale markers across many sessions.
+# Backstop sweep for sessions that died without SessionEnd (the normal owner is
+# cleanup-session-markers.sh, which removes this session's marker on exit).
 find "$state_dir" -name 'pr-created-*' -type f -mtime +7 -delete 2>/dev/null || true
 
 # Strip quoted strings before matching (mirrors block-push-main.sh) so a

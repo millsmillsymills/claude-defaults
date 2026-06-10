@@ -60,6 +60,14 @@ run_a 'gh pr create -t x -b y' '../evil'
 [ -f "$TMPHOME/.claude/state/pr-created-___evil" ] || fail_msg "A: did not sanitize sid into state dir"
 [ ! -e "$TMPHOME/.claude/evil" ] || fail_msg "A: unsanitized sid escaped state dir"
 
+# Conservative stance: an unquoted `gh pr merge` literal still triggers the
+# advisory once a marker exists -- the scrubber only strips quoted strings, and
+# the hook prefers warning too often to missing a real merge.
+run_a 'gh pr create -t x -b y' 'S5'
+run_a 'echo gh pr merge' 'S5'
+jq -e '.hookSpecificOutput.additionalContext' "$_a_out" >/dev/null 2>&1 ||
+  fail_msg "A: unquoted merge literal with marker should still warn (conservative)"
+
 # === Hook B: stop-check-clean-repo.sh ===
 B="hooks/stop-check-clean-repo.sh"
 
@@ -108,6 +116,23 @@ tr_read="$(mk_transcript Read)"
 # non-repo cwd -> no nudge.
 nonrepo="$(mktemp -d "$TMPHOME/nonrepo.XXXXXX")"
 [ "$(run_b "$nonrepo" B4 "$tr_edit")" = 0 ] || fail_msg "B: non-repo cwd should not nudge"
+
+# === Hook C: cleanup-session-markers.sh removes this session's markers ===
+C="hooks/cleanup-session-markers.sh"
+
+run_c() { # sid -> runs the SessionEnd cleanup hook
+  jq -nc --arg s "$1" '{session_id:$s,hook_event_name:"SessionEnd"}' |
+    HOME="$TMPHOME" bash "$C" >/dev/null 2>&1
+}
+
+# Seed markers for two sessions; cleanup of C1 removes only C1's markers.
+: >"$TMPHOME/.claude/state/pr-created-C1"
+: >"$TMPHOME/.claude/state/clean-nudged-C1"
+: >"$TMPHOME/.claude/state/pr-created-C2"
+run_c C1
+[ ! -e "$TMPHOME/.claude/state/pr-created-C1" ] || fail_msg "C: did not remove pr-created marker"
+[ ! -e "$TMPHOME/.claude/state/clean-nudged-C1" ] || fail_msg "C: did not remove clean-nudged marker"
+[ -e "$TMPHOME/.claude/state/pr-created-C2" ] || fail_msg "C: removed another session's marker"
 
 # === Hook D: safety-warn.sh now emits JSON additionalContext (not stderr) ===
 D="hooks/safety-warn.sh"
