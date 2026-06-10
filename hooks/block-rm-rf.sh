@@ -24,7 +24,7 @@ segment_is_rm_rf() {
   local recursive=0 force=0 cmd_seen=0 tok
   local -a toks
   read -ra toks <<<"$1"
-  for tok in "${toks[@]}"; do
+  for tok in ${toks[@]+"${toks[@]}"}; do
     if [ "$cmd_seen" -eq 0 ]; then
       case "$tok" in
       *=* | sudo) continue ;; # skip env assignments and a sudo prefix
