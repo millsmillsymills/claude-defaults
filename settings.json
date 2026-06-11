@@ -145,8 +145,7 @@
       "Bash(actionlint:*)",
       "Bash(zizmor:*)",
       "Bash(prek:*)",
-      "Bash(make:*)",
-      "Bash(trash:*)"
+      "Bash(make:*)"
     ]
   },
   "hooks": {
