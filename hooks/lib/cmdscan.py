@@ -17,6 +17,12 @@ from __future__ import annotations
 import re
 import shlex
 
+
+class DepthLimitExceeded(Exception):
+    """Wrapper nesting ran past the recursion bound, so the inner command was
+    never scanned. Raised (not silently swallowed) so a guard fails closed."""
+
+
 # Operators that terminate one command segment and begin the next. `(`/`)` are
 # included so a subshell's contents are judged as their own segment.
 _OPERATORS = {"&&", "||", ";", "|", "&", "\n", "(", ")"}
@@ -75,8 +81,14 @@ _LAUNCHER_VALUE_FLAGS = {
     },
 }
 # Arg-launchers that take a bare positional (not a flag) before the command --
-# `timeout`'s DURATION. Consumed after the option flags.
+# `timeout`'s DURATION. Consumed after the option flags, but only when it looks
+# like a duration: `timeout rm -rf /etc` (no duration) must not skip `rm` as if
+# it were the DURATION, or the wrapped command goes unchecked.
 _LAUNCHER_POSITIONALS = {"timeout": 1}
+_RE_DURATION = re.compile(r"^[0-9]+(\.[0-9]+)?[smhd]?$")
+# A brace group runs its body in the current shell, so `{ rm -rf /etc; }` hides
+# the real command behind a `{` token. The braces are skipped like a launcher.
+_BRACE_GROUP = {"{", "}"}
 _RE_ENV = re.compile(r"^[A-Za-z_]\w*=")
 
 
@@ -100,36 +112,43 @@ def _skip_launcher_args(seg: list[str], i: int, launcher: str) -> int:
         if "=" not in flag and flag in value_flags and i < n:
             i += 1
     for _ in range(_LAUNCHER_POSITIONALS.get(launcher, 0)):
-        if i < n and not seg[i].startswith("-"):
+        if i < n and not seg[i].startswith("-") and _RE_DURATION.match(seg[i]):
             i += 1
     return i
 
 
-def command_index(seg: list[str], name: str) -> int:
-    """Index of command `name` in `seg`, or -1 if `seg` isn't that command.
+def command_start(seg: list[str]) -> int:
+    """Index of the real command in `seg` after skipping every prefix.
 
     Skips leading launcher prefixes (`sudo`, `doas`, `command`, `env`, ...),
-    `VAR=value` assignments, and arg-launchers with their own arguments
-    (`timeout 5`, `nice -n 5`, `xargs`), and matches on the command *basename*
-    so `/bin/rm`, `command rm`, and `env git` are recognized -- a literal match
-    let every one of those forms through.
+    `VAR=value` assignments, brace-group tokens (`{`/`}`), and arg-launchers with
+    their own arguments (`timeout 5`, `nice -n 5`, `xargs`). The returned index
+    may be `len(seg)` when the segment is only prefixes (`}` on its own).
     """
     i = 0
     n = len(seg)
     while i < n:
         token = seg[i]
-        if _RE_ENV.match(token):
-            i += 1
-            continue
         token_base = base(token)
-        if token_base in LAUNCHERS:
+        if _RE_ENV.match(token) or token in _BRACE_GROUP or token_base in LAUNCHERS:
             i += 1
             continue
         if token_base in _ARG_LAUNCHERS:
             i = _skip_launcher_args(seg, i + 1, token_base)
             continue
         break
-    if i < n and base(seg[i]) == name:
+    return i
+
+
+def command_index(seg: list[str], name: str) -> int:
+    """Index of command `name` in `seg`, or -1 if `seg` isn't that command.
+
+    Matches on the command *basename* after skipping prefixes, so `/bin/rm`,
+    `command rm`, `env git`, and `{ rm ...` are recognized -- a literal match on
+    `seg[0]` let every one of those forms through.
+    """
+    i = command_start(seg)
+    if i < len(seg) and base(seg[i]) == name:
         return i
     return -1
 
@@ -232,17 +251,49 @@ def nested_payloads(seg: list[str]):
             yield payload
 
 
-def _fallback_segments(cmd: str):
+def fallback_payload(seg: list[str]) -> str:
+    """The wrapped command string a de-quoted `bash -c`/`eval` segment carries.
+
+    The fallback has already split the payload's words apart (quotes are gone),
+    so the tail is rejoined into a command string the caller re-scans. Returns
+    "" when the segment wraps nothing.
+    """
+    if not seg:
+        return ""
+    cmd_base = base(seg[0])
+    if cmd_base in _SHELL_WRAPPERS:
+        for i, token in enumerate(seg):
+            if token == "-c" or (
+                len(token) > 1
+                and token[0] == "-"
+                and token[1] != "-"
+                and token.endswith("c")
+            ):
+                return " ".join(seg[i + 1 :])
+        return ""
+    if cmd_base == "eval":
+        return " ".join(seg[1:])
+    return ""
+
+
+def _fallback_segments(cmd: str, depth: int = 0, max_depth: int = _MAX_DEPTH):
     """De-quote and split a command shlex can't parse (unbalanced quotes).
 
-    Reintroduces the old quote-strip approximation only for the rare malformed
-    case, so a dangerous command with broken quoting is still segmented.
+    The old approximation flat-split the string and never re-entered a
+    `bash -c '...'` payload, so a wrapped destructive command with broken quoting
+    slipped through; the de-quoted wrapper tail is now re-scanned too.
     """
+    if depth > max_depth:
+        raise DepthLimitExceeded(f"wrapper nesting exceeded {max_depth} levels")
     cleaned = cmd.replace('"', " ").replace("'", " ")
     for piece in re.split(r"&&|\|\||[;|&\n()]", cleaned):
         seg = piece.split()
-        if seg:
-            yield seg
+        if not seg:
+            continue
+        yield seg
+        payload = fallback_payload(seg)
+        if payload:
+            yield from _fallback_segments(payload, depth + 1, max_depth)
 
 
 def iter_segments(cmd: str, depth: int = 0, max_depth: int = _MAX_DEPTH):
@@ -250,14 +301,16 @@ def iter_segments(cmd: str, depth: int = 0, max_depth: int = _MAX_DEPTH):
 
     Each yielded value is a token list (one command invocation). Payloads
     carried by `bash -c`/`eval`/... are unwrapped and their segments yielded
-    too, so a guard sees the real command regardless of wrapping.
+    too, so a guard sees the real command regardless of wrapping. Nesting past
+    `max_depth` raises `DepthLimitExceeded` -- the inner command would otherwise
+    go unscanned, so the caller must fail closed rather than allow it.
     """
     if depth > max_depth:
-        return
+        raise DepthLimitExceeded(f"wrapper nesting exceeded {max_depth} levels")
     try:
         tokens = tokenize(cmd)
     except ValueError:
-        yield from _fallback_segments(cmd)
+        yield from _fallback_segments(cmd, depth, max_depth)
         return
     for seg in segments(tokens):
         yield seg

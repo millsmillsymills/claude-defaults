@@ -33,6 +33,13 @@ from guard_io import (  # noqa: E402  # ty: ignore[unresolved-import]
     read_command,
 )
 
+
+class _BranchResolutionError(Exception):
+    """git itself could not be run or answered, so the current branch is
+    unknown. Raised (not collapsed to None) so a bare push fails closed rather
+    than silently allowing a possible push to a protected branch."""
+
+
 _PROTECTED = ("main", "master")
 # git-level options (before the `push` subcommand) that consume the next token
 # as their value, so it must be skipped when locating `push`.
@@ -61,7 +68,13 @@ def _push_dest(ref: str) -> str:
 
 
 def _current_branch() -> str | None:
-    """The checked-out branch name, or None if it can't be determined."""
+    """The checked-out branch name.
+
+    Returns None where a bare push legitimately cannot reach a protected branch:
+    outside a repo, or on a detached HEAD. Raises `_BranchResolutionError` when
+    git could not be run or failed for any other reason -- that is a verification
+    failure, not a clean "no branch", so the caller fails closed.
+    """
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
@@ -70,10 +83,16 @@ def _current_branch() -> str | None:
             timeout=5,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
-        return None
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise _BranchResolutionError("git could not be run") from exc
+    if out.returncode != 0:
+        if "not a git repository" in out.stderr.lower():
+            return None
+        raise _BranchResolutionError(f"git rev-parse failed (rc={out.returncode})")
     branch = out.stdout.strip()
-    return branch or None
+    if not branch or branch == "HEAD":  # empty, or a detached HEAD
+        return None
+    return branch
 
 
 def _push_args(seg: list[str]) -> list[str] | None:
@@ -95,13 +114,47 @@ def _push_args(seg: list[str]) -> list[str] | None:
     return seg[j + 1 :]
 
 
+def _refspecs(args: list[str]) -> list[str]:
+    """The refspec positionals in `git push` args.
+
+    The first positional is normally the remote and is dropped -- unless
+    `--repo[=]<remote>` supplied the remote, in which case every positional is a
+    refspec (`git push --repo=origin main` pushes `main`, not to a remote named
+    `main`). `--repo`'s separate-token value is consumed, not counted.
+    """
+    repo_supplied = False
+    remote_seen = False
+    skip_value = False
+    refspecs: list[str] = []
+    for token in args:
+        if skip_value:
+            skip_value = False
+            continue
+        if token == "--repo":
+            repo_supplied = True
+            skip_value = True
+            continue
+        if token.startswith("--repo="):
+            repo_supplied = True
+            continue
+        if token.startswith("-"):
+            continue
+        if not repo_supplied and not remote_seen:
+            remote_seen = True
+            continue
+        refspecs.append(token)
+    return refspecs
+
+
 def _is_push_to_protected(seg: list[str]) -> bool:
     """True if `seg` is a `git push` reaching main/master, bare push included."""
     args = _push_args(seg)
     if args is None:
         return False
-    positionals = [t for t in args if not t.startswith("-")]
-    refspecs = positionals[1:]  # first positional is the remote
+    # `--all`/`--mirror` push every local branch, main/master included.
+    if any(t in ("--all", "--mirror") for t in args):
+        return True
+    refspecs = _refspecs(args)
     if refspecs:
         return any(_push_dest(r) in _PROTECTED for r in refspecs)
     # Bare push (no refspec): the current branch is the destination.
