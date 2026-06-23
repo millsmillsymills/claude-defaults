@@ -1,12 +1,12 @@
 # Hooks Reference
 
-Every hook installed by claude-defaults, what it does, and how to test it. The hooks live at `hooks/*.sh` in this repo and are symlinked into `~/.claude/hooks/` by `scripts/install.sh`.
+Every hook installed by claude-defaults, what it does, and how to test it. The hooks live at `hooks/*.sh` and `hooks/*.py` in this repo (shared Python helpers in `hooks/lib/`) and are symlinked into `~/.claude/hooks/` by `scripts/install.sh`.
 
 ## Missing-hook safety net
 
 Every command-type hook in `settings.json` is invoked through `run-hook.sh <name> [args]` rather than referencing the script directly (the one exception is `session-heal.sh`, wired directly -- see below). This wrapper plus a `doctor.sh` self-heal step make a missing directory or a renamed/removed hook a non-event instead of a `/bin/sh: ...: No such file or directory` failure.
 
-- **`run-hook.sh` (runtime, in every hook command).** Ensures `logs/` and `hooks/lib/` exist and resolves its own symlink back to the repo, so it can run the real script even when `~/.claude/hooks/<name>` is missing or dangling. It does **not** rewrite symlinks -- repairing the install is `doctor.sh`'s job, not the per-tool-call hot path. If the hook genuinely can't be found it warns on stderr and exits 0 (fails OPEN, so infrastructure breakage never blocks a tool call); a real hook's own exit code (including 2 to block) is propagated unchanged. When the skipped hook is a **security** hook (`safety-block.py`, `block-rm-rf.sh`, `block-push-main.sh`), or python3 is unavailable for a `.py` hook, the skip is also recorded to `logs/hook-errors.log` and warned loudly -- a never-ran guard must not be silent.
+- **`run-hook.sh` (runtime, in every hook command).** Ensures `logs/` and `hooks/lib/` exist and resolves its own symlink back to the repo, so it can run the real script even when `~/.claude/hooks/<name>` is missing or dangling. It does **not** rewrite symlinks -- repairing the install is `doctor.sh`'s job, not the per-tool-call hot path. If the hook genuinely can't be found it warns on stderr and exits 0 (fails OPEN, so infrastructure breakage never blocks a tool call); a real hook's own exit code (including 2 to block) is propagated unchanged. When the skipped hook is a **security** hook (`safety-block.py`, `block-rm-rf.py`, `block-push-main.py`), or python3 is unavailable for a `.py` hook, the skip is also recorded to `logs/hook-errors.log` and warned loudly -- a never-ran guard must not be silent.
 - **`session-heal.sh` (SessionStart).** Wired **directly** (not through `run-hook.sh`) so it can rebuild the wrapper's own symlink if that is what went missing. Runs `doctor.sh --quick`, appending output to `logs/session-heal.log` for a forensic trail, and never blocks startup.
 - **`scripts/doctor.sh` (manual or via SessionStart).** Prunes dangling symlinks under the managed `hooks/`, `hooks/lib/`, `commands/`, `agents/`, and `skills/` dirs (links to vanished repo targets only; foreign links are left alone), then re-links missing content. `--quick` stops there; the default also re-merges `settings.json` from the template (collapsing any duplicated hook groups and picking up renamed hooks). Idempotent. Run it after renaming or removing a hook.
 
@@ -33,34 +33,34 @@ Hook **content** can't be regenerated -- symlinks point into this repo, so if a 
 
 ## Installed hooks
 
-### `block-rm-rf.sh` (legacy, PreToolUse Bash)
+### `block-rm-rf.py` (PreToolUse Bash, exit 2)
 
-Blocks any `rm -rf` invocation. Inline command in `settings.json`. **Pattern:** `rm[[:space:]]+-[^[:space:]]*r[^[:space:]]*f`. **Test:**
+Blocks any `rm -rf` (recursive+force) invocation -- broader than `safety-block.py`, which only blocks `rm -rf` against protected paths. Shares the `cmdscan` tokenizer, so wrapped (`bash -c '...'`) and unspaced-separator (`true;rm -rf x`) forms are unwrapped and checked. **Test:**
 
 ```bash
-echo '{"tool_input":{"command":"rm -rf /tmp"}}' | bash hooks/block-rm-rf.sh
+echo '{"tool_input":{"command":"rm -rf /tmp"}}' | hooks/block-rm-rf.py
 # expect: exit 2 with "BLOCKED: Use trash instead of rm -rf"
 ```
 
-### `block-push-main.sh` (legacy, PreToolUse Bash)
+### `block-push-main.py` (PreToolUse Bash, exit 2)
 
-Blocks `git push <remote> main` or `git push <remote> master`. Does NOT cover force-push or production branches -- that's `safety-block.py`'s job.
+Blocks `git push <remote> main`/`master` -- any explicit refspec whose destination is a protected branch, and a *bare* `git push` when the current branch is main/master. Shares the `cmdscan` tokenizer (wrapped/unspaced forms covered). Does NOT cover force-push or production branches -- that's `safety-block.py`'s job.
 
 ### `safety-block.py` (PreToolUse Bash, exit 2)
 
-Parses the command with `shlex` and matches patterns against the tokens, so a payload hidden inside `bash -c '...'`, `sh -c '...'`, or `eval '...'` is unwrapped and checked too. Hard-blocks these destructive patterns:
+Tokenizes the command with the shared `cmdscan` parser and matches patterns against the segments, so a payload hidden inside `bash -c '...'`, `sh -c '...'`, or `eval '...'`, and commands after unspaced separators (`true;mkfs ...`), are unwrapped and checked too. Hard-blocks these destructive patterns:
 
 | Category | Pattern |
 |---|---|
-| `rm -rf` against root/home | `rm -rf /`, `rm -rf /Users/...`, `rm -rf ~`, `rm -rf $HOME...` |
+| `rm -rf` against protected paths | root and the root glob (`rm -rf /`, `/*`), system dirs (`/etc`, `/usr`, `/bin`, ...), `/Users/...`, `~`, `$HOME...` -- including `/bin/rm`, `command rm`, `env rm` forms |
 | sudo rm -rf | any `sudo rm -rf ...` |
 | dd to disk devices | `dd of=/dev/disk*`, `/dev/sd*`, `/dev/nvme*`, `/dev/rdisk*` |
 | Filesystem ops | `mkfs.*`, `wipefs ...` |
 | Partition ops | `fdisk -w`, `parted /dev/... mklabel/mkpart/rm/resizepart` |
 | Fork bomb | `:(){ :\|:& };:` |
-| chmod 777 | `chmod -R 777 /`, `chmod -R 777 ~` |
-| Force-push | `git push --force/-f/--force-with-lease` to main/master/production/prod, or with no branch named |
-| Wrapped payloads | any of the above inside `bash -c`/`sh -c`/`eval` |
+| chmod 777 | recursive (`-R`/`--recursive`) world-writable (`777`/`0777`) against `/` or `~` |
+| Force-push | `git push --force/-f/--force-with-lease` whose destination is main/master/production/prod, or with no branch named |
+| Wrapped/separated payloads | any of the above inside `bash -c`/`sh -c`/`eval`, or after an unspaced `;`/`&&`/`\|` |
 
 **Test:** `bash tests/test-guard-hooks.sh`
 

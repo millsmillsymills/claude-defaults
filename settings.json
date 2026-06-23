@@ -128,11 +128,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/run-hook.sh block-rm-rf.sh"
+            "command": "$HOME/.claude/hooks/run-hook.sh block-rm-rf.py"
           },
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/run-hook.sh block-push-main.sh"
+            "command": "$HOME/.claude/hooks/run-hook.sh block-push-main.py"
           },
           {
             "type": "command",

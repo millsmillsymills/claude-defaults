@@ -1,55 +1,51 @@
 #!/usr/bin/env python3
 """PreToolUse(Bash) hook: block catastrophic destructive commands.
 
-Parses the command with ``shlex`` and inspects the resulting tokens, so a
-payload tucked inside ``bash -c '...'``, ``sh -c '...'`` or ``eval '...'`` is
-unwrapped and checked too -- the previous shell implementation stripped quoted
-strings before matching, which let any of those wrappers bypass every pattern.
+Tokenizes the command with the shared ``cmdscan`` parser and inspects the
+resulting segments, so a payload tucked inside ``bash -c '...'``, ``sh -c
+'...'`` or ``eval '...'``, and commands hidden after unspaced separators
+(``true;mkfs ...``), are unwrapped and checked too -- the previous shell
+implementation stripped quoted strings before matching, which let any of those
+wrappers bypass every pattern.
 
 Exit 2 with an explanation blocks the call; exit 0 allows it. Malformed input
 (unparseable JSON, a non-string command) fails *open* -- there is nothing to
 scan, so a parser edge case never wedges the session, and ``permissions.deny``
 in settings.json is the hard backstop for the ``rm -rf`` / ``sudo`` classes. A
-*scan crash* fails *closed*: a matcher threw on a real command, so there is no
-verdict, and the destructive classes with no deny-list backstop (``dd``,
-``mkfs``, fork bombs, ...) would otherwise pass unchecked. That one command is
-blocked and the crash is logged loudly to ``logs/hook-errors.log`` and stderr
-(mirroring run-hook.sh) so the matcher bug is fixable.
+*scan crash* fails *closed* (see ``guard_io.fail_closed``): a matcher threw on a
+real command, so there is no verdict, and the destructive classes with no
+deny-list backstop (``dd``, ``mkfs``, fork bombs, ...) would otherwise pass
+unchecked. That one command is blocked and the crash is logged loudly.
 """
 
 from __future__ import annotations
 
-import json
 import re
-import shlex
 import sys
-import traceback
-from datetime import datetime, timezone
 from pathlib import Path
 
-_OPERATORS = {"&&", "||", ";", "|", "&", "\n", "(", ")"}
-_SHELL_WRAPPERS = {"bash", "sh", "zsh", "dash", "ksh"}
-# Launcher prefixes that delegate to the command that follows. Skipping them
-# stops `command rm`, `env rm`, `sudo rm` (etc.) from hiding the real command
-# behind a token the checks don't recognize.
-_RM_LAUNCHERS = {
-    "sudo",
-    "command",
-    "env",
-    "nohup",
-    "nice",
-    "stdbuf",
-    "time",
-    "ionice",
-    "setsid",
-}
-# Redirection operators consume the following token (their target), which is not
-# an argument of the command. Dropping the pair keeps a redirect target like
-# `> /var/log/x` from being mistaken for a destructive command's operand.
-_REDIRECTS = {">", ">>", "<", "<<", "<<<", "&>", ">&", "1>", "1>>", "2>", "2>>"}
+# Shared command tokenization lives in hooks/lib so all three guards parse a
+# command the same way. The path is injected at runtime (the hook may run from a
+# symlink), so static resolution can't see the module.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+
+from cmdscan import (  # noqa: E402  # ty: ignore[unresolved-import]
+    base as _base,
+    has_recursive_force as _has_recursive_force,
+    nested_payloads as _nested_payloads,
+    rm_invocation as _rm_invocation,
+    segments as _segments,
+    strip_redirects as _strip_redirects,
+    tokenize as _tokenize,
+)
+from guard_io import (  # noqa: E402  # ty: ignore[unresolved-import]
+    block,
+    fail_closed,
+    read_command,
+)
+
 _MAX_DEPTH = 5
 
-_RE_ENV = re.compile(r"^[A-Za-z_]\w*=")
 _RE_DD_DISK = re.compile(r"^of=/dev/(?:disk|sd|nvme|rdisk)")
 _PROTECTED_BRANCHES = ("main", "master", "production", "prod")
 # Top-level system directories an `rm -rf` (or `chmod -R 777`) must never touch.
@@ -77,11 +73,6 @@ _PROTECTED_SYSTEM_DIRS = (
 _RE_FORK_BOMB = re.compile(r"^\s*:\s*\(\)\s*\{.*\|.*&.*\}", re.DOTALL)
 
 
-def _base(token: str) -> str:
-    """Return the command basename (strip any leading path)."""
-    return token.rsplit("/", 1)[-1]
-
-
 def _is_protected_target(token: str) -> bool:
     """True if `token` names root, a system dir, the home dir, or a child.
 
@@ -97,53 +88,6 @@ def _is_protected_target(token: str) -> bool:
         token == d or token == d + "/*" or token.startswith(d + "/")
         for d in _PROTECTED_SYSTEM_DIRS
     )
-
-
-def _strip_redirects(tokens: list[str]) -> list[str]:
-    """Drop redirection operators and the target token each one consumes."""
-    out: list[str] = []
-    skip_next = False
-    for token in tokens:
-        if skip_next:
-            skip_next = False
-            continue
-        if token in _REDIRECTS:
-            skip_next = True
-            continue
-        out.append(token)
-    return out
-
-
-def _has_recursive_force(flags: list[str]) -> bool:
-    """True if `flags` request both recursive and force in any arrangement."""
-    recursive = force = False
-    for token in flags:
-        if token == "--recursive":
-            recursive = True
-        elif token == "--force":
-            force = True
-        elif token.startswith("-"):
-            if "r" in token.lower():
-                recursive = True
-            if "f" in token:
-                force = True
-    return recursive and force
-
-
-def _rm_invocation(seg: list[str]) -> int:
-    """Index of the `rm` command in `seg`, or -1 if the segment isn't an `rm`.
-
-    Skips leading launcher prefixes (`sudo`, `command`, `env`, ...) and
-    `VAR=value` assignments, and matches on the command *basename* so
-    `/bin/rm`, `command rm`, and `env rm` are recognized -- the literal `rm`
-    match let every one of those forms through.
-    """
-    i = 0
-    while i < len(seg) and (seg[i] in _RM_LAUNCHERS or _RE_ENV.match(seg[i])):
-        i += 1
-    if i < len(seg) and _base(seg[i]) == "rm":
-        return i
-    return -1
 
 
 def _is_rm_rf_protected(seg: list[str]) -> bool:
@@ -298,61 +242,6 @@ _CHECKS: list[tuple] = [
 ]
 
 
-def _tokenize(cmd: str) -> list[str]:
-    """Tokenize a command, splitting unspaced operators (`true;mkfs ...`).
-
-    `shlex.split` only separates operators that are surrounded by whitespace, so
-    `true;mkfs.ext4 /dev/sda` parsed as a single `true;mkfs.ext4` token and
-    every check was skipped. `punctuation_chars=True` makes shlex emit `;`, `&`,
-    `|`, `(`, `)` as their own tokens regardless of spacing. `commenters=""`
-    mirrors `shlex.split` so a `#` mid-command is not treated as a comment.
-    """
-    lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
-    lex.whitespace_split = True
-    lex.commenters = ""
-    return list(lex)
-
-
-def _segments(tokens: list[str]):
-    """Split a token list into command segments on shell operators."""
-    seg: list[str] = []
-    for token in tokens:
-        if token in _OPERATORS:
-            if seg:
-                yield seg
-                seg = []
-        else:
-            seg.append(token)
-    if seg:
-        yield seg
-
-
-def _nested_payloads(seg: list[str]):
-    """Yield nested command strings carried by `bash -c`/`eval`/... in `seg`."""
-    if not seg:
-        return
-    base = _base(seg[0])
-    if base in _SHELL_WRAPPERS:
-        for i, token in enumerate(seg):
-            # `-c <cmd>`, or a combined short-flag bundle ending in `c`
-            # (`bash -lc '...'`, `-ec`, `-xc`, `-ic`), carries the command
-            # string in the next token. Matching only `-c` let those wrappers
-            # smuggle a payload past every check.
-            is_dash_c = token == "-c" or (
-                len(token) > 1
-                and token[0] == "-"
-                and token[1] != "-"
-                and token.endswith("c")
-            )
-            if is_dash_c and i + 1 < len(seg):
-                yield seg[i + 1]
-                break
-    elif base == "eval":
-        payload = " ".join(seg[1:])
-        if payload:
-            yield payload
-
-
 def _check_segment(seg: list[str]) -> str | None:
     for predicate, reason in _CHECKS:
         if predicate(seg):
@@ -398,64 +287,16 @@ def scan(cmd: str, depth: int = 0) -> str | None:
     return None
 
 
-def _log_scan_error(exc: BaseException) -> None:
-    """Record a scan crash to a durable log and stderr; the caller fails closed."""
-    try:
-        print(
-            f"WARNING: safety-block.py scan crashed ({exc!r}); the "
-            "destructive-command guard could not run. File a bug or run "
-            "scripts/doctor.sh.",
-            file=sys.stderr,
-        )
-    except OSError:
-        pass  # a dead stderr must never change the fail-closed verdict
-    try:
-        log_dir = Path.home() / ".claude" / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        with (log_dir / "hook-errors.log").open("a", encoding="utf-8") as fh:
-            fh.write(f"{stamp} safety-block.py scan-error: {exc!r}\n")
-            fh.write(
-                "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-            )
-    except OSError as log_exc:
-        try:
-            print(
-                "WARNING: safety-block.py could not write hook-errors.log "
-                f"({log_exc!r}); the scan-crash audit trail was lost.",
-                file=sys.stderr,
-            )
-        except OSError:
-            pass
-
-
 def main() -> int:
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    cmd = read_command()
+    if not cmd:
         return 0  # malformed input: nothing to scan, fail open quietly
-    cmd = (
-        data.get("tool_input", {}).get("command", "") if isinstance(data, dict) else ""
-    )
-    if not isinstance(cmd, str) or not cmd:
-        return 0
     try:
         reason = scan(cmd)
-    except Exception as exc:  # noqa: BLE001 -- fail closed + loud, see _log_scan_error
-        _log_scan_error(exc)
-        try:
-            print(
-                "BLOCKED: safety-block.py could not verify this command "
-                "(scan crashed). Refusing out of caution -- rerun, or bypass "
-                "explicitly if you trust it.",
-                file=sys.stderr,
-            )
-        except OSError:
-            pass  # block regardless of whether the message reached the user
-        return 2
+    except Exception as exc:  # noqa: BLE001 -- fail closed + loud, see guard_io
+        return fail_closed("safety-block.py", exc)
     if reason:
-        print(f"BLOCKED: {reason}", file=sys.stderr)
-        return 2
+        return block(reason)
     return 0
 
 

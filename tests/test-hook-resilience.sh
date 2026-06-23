@@ -45,10 +45,10 @@ echo '{"tool_input":{"command":"ls -la"}}' | bash "$WRAP" safety-block.py >/dev/
 [ "$rc" = "0" ] || fail "safe command via wrapper returned $rc (want 0)"
 pass "safe command passes through"
 
-# --- Test 5: blocking .sh hook propagates exit 2 (bash dispatch) ---
-echo '{"tool_input":{"command":"rm -rf /tmp/x"}}' | bash "$WRAP" block-rm-rf.sh >/dev/null 2>&1 && rc=0 || rc=$?
-[ "$rc" = "2" ] || fail "block-rm-rf.sh via wrapper returned $rc (want 2)"
-pass "blocking .sh hook propagates exit 2 (bash dispatch)"
+# --- Test 5: a second blocking .py hook propagates exit 2 via the wrapper ---
+echo '{"tool_input":{"command":"rm -rf /tmp/x"}}' | bash "$WRAP" block-rm-rf.py >/dev/null 2>&1 && rc=0 || rc=$?
+[ "$rc" = "2" ] || fail "block-rm-rf.py via wrapper returned $rc (want 2)"
+pass "blocking .py hook propagates exit 2 (block-rm-rf)"
 
 # --- Test 6: wrapper still runs the hook when the installed link is missing,
 #             WITHOUT mutating the install (link repair is doctor's job) ---
