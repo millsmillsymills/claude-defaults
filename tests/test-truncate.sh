@@ -95,7 +95,10 @@ rm -f "$tmp"
 
 # Case 7 (#116): a freshly created log file is 0600 and its dir 0700, so other
 # local users cannot read command args/output.
-statmode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
+# GNU stat (-c) first; on BSD/macOS that errors and we fall back to -f. The
+# reverse order is wrong on Linux: `stat -f` there means filesystem status,
+# which succeeds with non-mode output instead of failing over to -c.
+statmode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
 tmpd=$(mktemp -d)
 logf="$tmpd/sub/tool.jsonl"
 echo '{"call_id":"c7","output":{"stdout":"hi","stderr":""}}' |
