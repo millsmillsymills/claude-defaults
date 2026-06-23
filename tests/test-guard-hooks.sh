@@ -377,7 +377,25 @@ push_with_path() { # pathdir cmd
   fail_msg "push: bare push with git absent did not fail closed (expected block)"
 [ "$(push_with_path "$norepo:$PATH" 'git push')" = "0" ] ||
   fail_msg "push: bare push outside a repo should be allowed (expected rc=0)"
-rm -rf "$fakebin" "$norepo" "$nogit"
+# #141: outside-repo detection must not depend on the user's locale. This fake
+# git emits its "not a repository" diagnostic in English only under LC_ALL=C; the
+# hook must force LC_ALL=C so the bare push is still allowed even when the ambient
+# locale is non-English (here de_DE). Without the fix the German message would not
+# match and the push would fail closed (block).
+locale_norepo=$(mktemp -d)
+cat >"$locale_norepo/git" <<'EOS'
+#!/bin/sh
+if [ "$LC_ALL" = "C" ]; then
+  echo "fatal: not a git repository (or any of the parent directories)" >&2
+else
+  echo "fatal: Kein Git-Repository (oder eines der ubergeordneten Verzeichnisse)" >&2
+fi
+exit 128
+EOS
+chmod +x "$locale_norepo/git"
+[ "$(LC_ALL=de_DE.UTF-8 push_with_path "$locale_norepo:$PATH" 'git push')" = "0" ] ||
+  fail_msg "push: outside-repo under a non-English locale should be allowed (expected rc=0)"
+rm -rf "$fakebin" "$norepo" "$nogit" "$locale_norepo"
 
 if [ "$fail" -eq 0 ]; then
   echo "test-guard-hooks: PASS"

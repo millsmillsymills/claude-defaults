@@ -17,6 +17,7 @@ closed and is logged loudly, mirroring safety-block.py.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -30,6 +31,7 @@ from cmdscan import (  # noqa: E402  # ty: ignore[unresolved-import]
 from guard_io import (  # noqa: E402  # ty: ignore[unresolved-import]
     block,
     fail_closed,
+    fail_closed_unverified,
     read_command,
 )
 
@@ -74,6 +76,10 @@ def _current_branch() -> str | None:
     outside a repo, or on a detached HEAD. Raises `_BranchResolutionError` when
     git could not be run or failed for any other reason -- that is a verification
     failure, not a clean "no branch", so the caller fails closed.
+
+    git runs under `LC_ALL=C` so the outside-a-repo case is detected by git's
+    English diagnostic regardless of the user's locale -- otherwise a non-English
+    git would fail closed (block) a bare push run outside any repo.
     """
     try:
         out = subprocess.run(
@@ -82,6 +88,7 @@ def _current_branch() -> str | None:
             text=True,
             timeout=5,
             check=False,
+            env={**os.environ, "LC_ALL": "C"},
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise _BranchResolutionError("git could not be run") from exc
@@ -172,6 +179,13 @@ def main() -> int:
         return 0
     try:
         hit = scan(cmd)
+    except _BranchResolutionError as exc:
+        return fail_closed_unverified(
+            "block-push-main.py",
+            "Cannot resolve the current branch to check a bare push; refusing "
+            "out of caution. Rerun, or push an explicit non-protected refspec.",
+            exc,
+        )
     except Exception as exc:  # noqa: BLE001 -- fail closed + loud
         return fail_closed("block-push-main.py", exc)
     if hit:

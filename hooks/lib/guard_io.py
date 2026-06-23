@@ -60,21 +60,44 @@ def fail_closed(hook_name: str, exc: BaseException) -> int:
     and record the crash to logs/hook-errors.log and stderr so the bug is
     fixable.
     """
-    _log_scan_error(hook_name, exc)
+    _log_guard_error(
+        hook_name,
+        exc,
+        stderr_note="scan crashed; the guard could not run. File a bug or run "
+        "scripts/doctor.sh",
+        log_tag="scan-error",
+    )
     return block(
         f"{hook_name} could not verify this command (scan crashed). "
         "Refusing out of caution -- rerun, or bypass explicitly if you trust it."
     )
 
 
-def _log_scan_error(hook_name: str, exc: BaseException) -> None:
-    """Record a scan crash to a durable log and stderr; caller fails closed."""
+def fail_closed_unverified(
+    hook_name: str, block_reason: str, exc: BaseException
+) -> int:
+    """Block (exit 2) for a *deliberate* fail-closed: the guard could not
+    establish a fact it needs to judge the command (not a matcher crash).
+
+    Logs the cause durably with wording that distinguishes it from a scan crash,
+    so the audit trail does not read an intentional fail-closed as a bug.
+    `block_reason` is shown to the user; `exc` carries the underlying cause.
+    """
+    _log_guard_error(
+        hook_name,
+        exc,
+        stderr_note="could not verify a precondition; failing closed",
+        log_tag="unverified",
+    )
+    return block(block_reason)
+
+
+def _log_guard_error(
+    hook_name: str, exc: BaseException, *, stderr_note: str, log_tag: str
+) -> None:
+    """Record a fail-closed cause to a durable log and stderr; caller blocks."""
     try:
-        print(
-            f"WARNING: {hook_name} scan crashed ({exc!r}); the guard could not "
-            "run. File a bug or run scripts/doctor.sh.",
-            file=sys.stderr,
-        )
+        print(f"WARNING: {hook_name} {stderr_note} ({exc!r}).", file=sys.stderr)
     except OSError:
         pass  # a dead stderr must never change the fail-closed verdict
     try:
@@ -82,7 +105,7 @@ def _log_scan_error(hook_name: str, exc: BaseException) -> None:
         log_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         with (log_dir / "hook-errors.log").open("a", encoding="utf-8") as fh:
-            fh.write(f"{stamp} {hook_name} scan-error: {exc!r}\n")
+            fh.write(f"{stamp} {hook_name} {log_tag}: {exc!r}\n")
             fh.write(
                 "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
             )
@@ -90,7 +113,7 @@ def _log_scan_error(hook_name: str, exc: BaseException) -> None:
         try:
             print(
                 f"WARNING: {hook_name} could not write hook-errors.log "
-                f"({log_exc!r}); the scan-crash audit trail was lost.",
+                f"({log_exc!r}); the fail-closed audit trail was lost.",
                 file=sys.stderr,
             )
         except OSError:
