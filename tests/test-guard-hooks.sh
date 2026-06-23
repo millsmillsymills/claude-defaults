@@ -182,6 +182,32 @@ expect_block "$SAFETY" 'chmod -R777 ~' "safety chmod -R777 bundle"
 expect_block "$SAFETY" 'chmod -R=777 /etc' "safety chmod -R=777 equals"
 expect_block "$SAFETY" 'chmod -fR0777 ~' "safety chmod -fR0777 bundle"
 expect_allow "$SAFETY" 'chmod -R755 ~' "safety chmod -R755 not world-writable"
+# #137: symbolic chmod modes granting world (other) write, separate and bundled.
+expect_block "$SAFETY" 'chmod -R a+rwx /etc' "safety chmod a+rwx symbolic"
+expect_block "$SAFETY" 'chmod -R o+w /etc' "safety chmod o+w symbolic"
+expect_block "$SAFETY" 'chmod -R =rwx /etc' "safety chmod =rwx symbolic"
+expect_block "$SAFETY" 'chmod -R ugo+rwx ~' "safety chmod ugo+rwx symbolic"
+expect_block "$SAFETY" 'chmod -Ra=rwx /etc' "safety chmod -Ra=rwx bundled symbolic"
+# #137: symbolic modes that do NOT grant world-write stay allowed.
+expect_allow "$SAFETY" 'chmod -R u+w /etc' "safety chmod u+w owner only"
+expect_allow "$SAFETY" 'chmod -R g+w /etc' "safety chmod g+w group only"
+expect_allow "$SAFETY" 'chmod -R o-w /etc' "safety chmod o-w removes write"
+# #137: a clause with multiple ops still granting world-write must block.
+expect_block "$SAFETY" 'chmod -R a-x+w /etc' "safety chmod a-x+w multi-op"
+expect_block "$SAFETY" 'chmod -R o+w-x /etc' "safety chmod o+w-x multi-op"
+expect_block "$SAFETY" 'chmod -R u-w,o-x+w /etc' "safety chmod multi-clause world"
+expect_allow "$SAFETY" 'chmod -R u+w-x /etc' "safety chmod u+w-x owner only"
+# #137: nested braces whose only literal prefix is `/` still resolve to a root.
+# shellcheck disable=SC2016
+expect_block "$SAFETY" 'rm -rf /{etc,x{a..b}}' "safety nested brace /{etc,x{a..b}}"
+# shellcheck disable=SC2016
+expect_block "$SAFETY" 'rm -rf /{x{1..2},etc}' "safety nested brace /{x{1..2},etc}"
+# shellcheck disable=SC2016
+expect_allow "$SAFETY" 'rm -rf /tmp/{a,b{1..2}}' "safety nested brace /tmp allowed"
+# #137: an enormous range must be bounded (no hang/OOM) and fail closed, not
+# materialize the whole sequence. This case returns near-instantly if bounded.
+# shellcheck disable=SC2016
+expect_block "$SAFETY" 'rm -rf /tmp{1..100000000}' "safety huge range bounded fails closed"
 
 # #52: a non-string command must fail open (exit 0), never crash with rc=1.
 [ "$(
