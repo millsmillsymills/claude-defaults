@@ -38,8 +38,10 @@ import re
 # Value class for a secret assignment: a double- or single-quoted string, or an
 # unquoted shell/URL token. The quoted alternatives come first so `KEY="secret"`
 # is consumed whole -- the unquoted class stops at a quote, which would otherwise
-# leave the quoted value in the log.
-_SECRET_VALUE = r"(?:\"[^\"]*\"|'[^']*'|[^\s,;'\"]{1,})"
+# leave the quoted value in the log. The closing quote is optional so a value
+# truncated mid-string (`KEY="secret` with the log cut at the cap) still redacts
+# from the opening quote to end of token rather than leaking past it.
+_SECRET_VALUE = r"(?:\"[^\"]*\"?|'[^']*'?|[^\s,;'\"]{1,})"
 # Same, for space-separated CLI flags (`--token <value>`); the value must not
 # start with `-` so `--token --verbose` doesn't swallow the following flag.
 _FLAG_VALUE = r"(?:\"[^\"]*\"|'[^']*'|[^\s,;'\"-][^\s,;'\"]*)"
@@ -101,37 +103,46 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(://[^:@\s/]+):([^@\s]{1,})@"), r"\1:***@"),
     # Compound env vars: DB_PASSWORD=, app_secret_key=, AWS_SECRET_ACCESS_KEY=.
     # A plain \b-anchored pattern misses these because _ is a word character
-    # (no boundary before "PASSWORD"). Require `_` before the suffix word to
-    # avoid matches inside ordinary words (MONKEY, BUCKET, TICKET would hit
-    # "KEY"/"TOKEN"). Case-insensitive so lowercase/mixed-case names match too.
+    # (no boundary before "PASSWORD"). Anchor on the `_<suffix>` segment only --
+    # the preceding key chars stay outside the match (untouched in the output),
+    # so there is no unbounded quantified prefix to backtrack over. That keeps
+    # this linear on long underscore runs (a quantified prefix here caused
+    # catastrophic backtracking) while still requiring the `_` boundary that
+    # stops matches inside ordinary words (MONKEY, BUCKET hitting "KEY").
+    # Case-insensitive so lowercase/mixed-case names match too. A value may be
+    # separated by `=` or `:`, optionally with a closing key-quote in between
+    # (`"DB_PASSWORD": "x"` in a corrupt/truncated JSON line).
     (
         re.compile(
-            r"([A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*"
-            r"_(?:PASSWORD|PASSWD|SECRET|TOKEN|KEY|PAT|CREDENTIAL|CREDENTIALS|AUTH|URL))"
-            r"(\s*=\s*)" + _SECRET_VALUE,
+            r"(_(?:PASSWORD|PASSWD|SECRET|TOKEN|KEY|PAT|CREDENTIAL|CREDENTIALS|AUTH|URL))"
+            r"(\"?\s*[:=]\s*)" + _SECRET_VALUE,
             re.IGNORECASE,
         ),
         r"\1\2***",
     ),
-    # camelCase flat secrets: clientSecret=, accessToken=, sessionToken=. The
+    # camelCase flat secrets: clientSecret=, accessToken=, oauth2Token=. The
     # secret word has no separator or word boundary before it, so the \b- and
-    # _-anchored patterns miss it. Match the camelCase hump (a lowercase letter
-    # immediately before a Capitalized secret word); case-sensitive so the
+    # _-anchored patterns miss it. Anchor on a single lowercase-or-digit hump
+    # char immediately before a Capitalized secret word (`[a-z0-9]` so digit
+    # humps like oauth2Token / sha256Secret match too); case-sensitive so the
     # all-caps SECRET/TOKEN env forms (handled above) and ordinary words don't
-    # over-match.
+    # over-match. Like the compound-env pattern, only the anchor char is inside
+    # the match -- no unbounded prefix, so it stays linear.
     (
         re.compile(
-            r"([A-Za-z0-9]*[a-z](?:Password|Passwd|Secret|Token|Credential|Credentials))"
-            r"(\s*[:=]\s*)" + _SECRET_VALUE
+            r"([a-z0-9](?:Password|Passwd|Secret|Token|Credential|Credentials))"
+            r"(\"?\s*[:=]\s*)" + _SECRET_VALUE
         ),
         r"\1\2***",
     ),
     # key=value secrets where value is a single shell/URL token or a quoted
-    # string. No minimum value length -- a named secret of any size leaks.
+    # string. No minimum value length -- a named secret of any size leaks. The
+    # optional `"?` after the key word tolerates a closing key-quote so a
+    # corrupt/truncated JSON fragment (`"password": "x"`) still redacts.
     (
         re.compile(
             r"(?i)\b(password|passwd|secret|token|api[_-]?key)"
-            r"(\s*[:=]\s*)" + _SECRET_VALUE
+            r"(\"?\s*[:=]\s*)" + _SECRET_VALUE
         ),
         r"\1\2***",
     ),

@@ -79,6 +79,15 @@ declare -a cases=(
   # #115: camelCase non-secret keys must NOT be over-redacted
   'sortKey=ascending|sortKey=ascending|***'
   'monkeyCount=5|monkeyCount=5|***'
+  # #122: camelCase secret keys with a digit before the secret word (the lowercase
+  # hump anchor missed these, and the generic \b fallback misses inside a word).
+  'oauth2Token=verysecretval|oauth2Token=***|verysecretval'
+  'v2Secret=anothersecret|v2Secret=***|anothersecret'
+  'sha256Secret=digestsecret|sha256Secret=***|digestsecret'
+  # #122: unterminated-quote value (truncated log line) must still redact, not
+  # leak from the opening quote to end of token.
+  'PASSWORD="hunter2truncated|PASSWORD=***|hunter2truncated'
+  'clientSecret="cs_truncatedval|clientSecret=***|cs_truncatedval'
 )
 
 for c in "${cases[@]}"; do
@@ -124,6 +133,26 @@ except subprocess.TimeoutExpired:
 fi
 [ "$SECONDS" -lt 5 ] || fail_msg "redact.py took $SECONDS s (too slow)"
 
+# #122: long underscore/camelCase runs must not trigger catastrophic backtracking
+# in the compound-env / camelCase key patterns (anchored on the suffix word).
+adversarial2=$(python3 -c 'print("PASSWORD=" + "a_" * 8000 + " end")')
+payload2=$(jq -nc --arg v "$adversarial2" '{value: $v}')
+SECONDS=0
+if [ -n "$TIMEOUT_BIN" ]; then
+  echo "$payload2" | "$TIMEOUT_BIN" 5s python3 hooks/lib/redact.py >/dev/null ||
+    fail_msg "redact.py timed out on underscore-run input"
+else
+  echo "$payload2" | python3 -c '
+import subprocess, sys
+try:
+    sys.exit(subprocess.run([sys.executable, "hooks/lib/redact.py"],
+                            stdin=sys.stdin, timeout=5).returncode)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+' >/dev/null || fail_msg "redact.py timed out on underscore-run input"
+fi
+[ "$SECONDS" -lt 5 ] || fail_msg "redact.py took $SECONDS s on underscore run (too slow)"
+
 # Recursive structure
 nested='{"a":{"b":["password=foo", "ok"]}}'
 out=$(echo "$nested" | python3 hooks/lib/redact.py)
@@ -136,12 +165,21 @@ printf '%s\n' '{"args":{"command":"export GH=ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 printf '%s\n' 'this line is not json' >>"$tmplog"
 # #115: a token in a corrupt/non-JSON line must be redacted, not copied verbatim.
 printf '%s\n' 'traceback: token was ghp_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb here' >>"$tmplog"
+# #122: a truncated JSON fragment (fails json.loads) carries named secrets as
+# "key": "value" -- the quote between key and colon must not defeat redaction.
+printf '%s\n' '{"args": {"client_secret": "cs3cr3tleakval", "password": "pwleakval"' >>"$tmplog"
 python3 scripts/redact-existing-logs.py "$tmplog" >/dev/null
 if grep -qF 'ghp_aaaa' "$tmplog"; then
   fail_msg "H11: secret not redacted in log file"
 fi
 if grep -qF 'ghp_bbbb' "$tmplog"; then
   fail_msg "#115: secret in non-JSON line not redacted"
+fi
+if grep -qF 'cs3cr3tleakval' "$tmplog"; then
+  fail_msg "#122: client_secret in truncated-JSON line not redacted"
+fi
+if grep -qF 'pwleakval' "$tmplog"; then
+  fail_msg "#122: password in truncated-JSON line not redacted"
 fi
 grep -qF '***GH_TOKEN***' "$tmplog" || fail_msg "H11: redaction marker missing in log file"
 grep -qF 'this line is not json' "$tmplog" || fail_msg "H11: non-JSON line not preserved"
