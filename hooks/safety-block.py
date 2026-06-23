@@ -31,7 +31,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 
 from cmdscan import (  # noqa: E402  # ty: ignore[unresolved-import]
+    DepthLimitExceeded as _DepthLimitExceeded,
     base as _base,
+    command_start as _command_start,
+    fallback_payload as _fallback_payload,
     has_recursive_force as _has_recursive_force,
     nested_payloads as _nested_payloads,
     rm_invocation as _rm_invocation,
@@ -289,26 +292,32 @@ def _is_sudo_rm_rf(seg: list[str]) -> bool:
     return _has_recursive_force(_strip_redirects(seg[i + 1 :]))
 
 
+def _command_base(seg: list[str]) -> str:
+    """Basename of the real command after skipping launcher/brace prefixes.
+
+    `dd`/`mkfs`/`fdisk`/`chmod` checks inspected `seg[0]` directly, so a launcher
+    prefix (`sudo dd ...`, `command mkfs ...`, `env mkfs ...`) or a brace group
+    (`{ ... }`) hid the command behind a token -- routing through the shared
+    launcher-skip recognizes those forms the way `rm`/`git` already do.
+    """
+    i = _command_start(seg)
+    return _base(seg[i]) if i < len(seg) else ""
+
+
 def _is_dd_to_disk(seg: list[str]) -> bool:
     """`dd` writing to a raw disk device."""
-    return (
-        bool(seg) and _base(seg[0]) == "dd" and any(_RE_DD_DISK.match(t) for t in seg)
-    )
+    return _command_base(seg) == "dd" and any(_RE_DD_DISK.match(t) for t in seg)
 
 
 def _is_mkfs(seg: list[str]) -> bool:
     """A filesystem-creation or wipe command (`mkfs*`, `wipefs`)."""
-    if not seg:
-        return False
-    base = _base(seg[0])
+    base = _command_base(seg)
     return base.startswith("mkfs") or base == "wipefs"
 
 
 def _is_disk_partition(seg: list[str]) -> bool:
     """`fdisk`/`parted` invoked with a write operation on a device."""
-    if not seg:
-        return False
-    base = _base(seg[0])
+    base = _command_base(seg)
     if base == "fdisk":
         return "-w" in seg or any(t.startswith("/dev/") for t in seg)
     if base == "parted":
@@ -395,7 +404,7 @@ def _is_chmod_777(seg: list[str]) -> bool:
     `--recursive` like `-R`. A bundled `-R777`/`-Ra=rwx` token carries both the
     recursive flag and the mode, so each predicate is checked independently.
     """
-    if "chmod" not in [_base(t) for t in seg]:
+    if _command_base(seg) != "chmod":
         return False
     rest = _strip_redirects(seg)
     return (
@@ -480,24 +489,39 @@ def _check_segment(seg: list[str]) -> str | None:
     return None
 
 
-def _fallback_scan(cmd: str) -> str | None:
+def _fallback_scan(cmd: str, depth: int = 0) -> str | None:
     """Quote-unbalanced input shlex can't parse: strip quotes and re-check.
 
-    Reintroduces the old quote-strip approximation only for the rare malformed
-    case, so a dangerous command with broken quoting is still caught.
+    The old approximation never re-entered a `bash -c '...'` payload, so a
+    wrapped destructive command with broken quoting slipped through; the
+    de-quoted wrapper tail is now re-scanned too.
     """
+    if depth > _MAX_DEPTH:
+        raise _DepthLimitExceeded(f"wrapper nesting exceeded {_MAX_DEPTH} levels")
     cleaned = cmd.replace('"', " ").replace("'", " ")
-    for piece in re.split(r"&&|\|\||[;|&\n]", cleaned):
-        reason = _check_segment(piece.split())
+    for piece in re.split(r"&&|\|\||[;|&\n()]", cleaned):
+        seg = piece.split()
+        if not seg:
+            continue
+        reason = _check_segment(seg)
         if reason:
             return reason
+        payload = _fallback_payload(seg)
+        if payload:
+            reason = _fallback_scan(payload, depth + 1)
+            if reason:
+                return reason
     return None
 
 
 def scan(cmd: str, depth: int = 0) -> str | None:
-    """Return a block reason for `cmd`, recursing into wrapped payloads."""
+    """Return a block reason for `cmd`, recursing into wrapped payloads.
+
+    Nesting past `_MAX_DEPTH` raises `DepthLimitExceeded` so `main` fails closed:
+    the inner command would otherwise go unscanned and be allowed.
+    """
     if depth > _MAX_DEPTH:
-        return None
+        raise _DepthLimitExceeded(f"wrapper nesting exceeded {_MAX_DEPTH} levels")
     # Fork bombs are matched on the raw string: punctuation tokenization splits
     # the `()`/`|`/`&` the pattern is built from across segments, so a
     # per-segment check could never see the whole thing.

@@ -9,6 +9,7 @@ TESTS=(
   tests/test-redact-existing.sh
   tests/test-truncate.sh
   tests/test-hooks.sh
+  tests/test-cmdscan.sh
   tests/test-guard-hooks.sh
   tests/test-convention-hooks.sh
   tests/test-public-review-gate.sh

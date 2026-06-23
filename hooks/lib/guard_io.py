@@ -23,8 +23,10 @@ def read_command() -> str | None:
     """Return the Bash command from the tool-call envelope on stdin.
 
     Returns None when there is nothing to scan -- malformed JSON, a non-dict
-    payload, or a missing/non-string/empty command -- so the caller fails open
-    quietly. A parser edge case must never wedge the session.
+    payload, a non-dict `tool_input`, or a missing/non-string/empty command --
+    so the caller fails open quietly. A parser edge case must never wedge the
+    session: a non-dict `tool_input` (`{"tool_input": "x"}`) used to raise
+    AttributeError and exit 1, which the harness treats as a hook error.
     """
     try:
         data = json.load(sys.stdin)
@@ -32,7 +34,10 @@ def read_command() -> str | None:
         return None
     if not isinstance(data, dict):
         return None
-    cmd = data.get("tool_input", {}).get("command", "")
+    tool_input = data.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return None
+    cmd = tool_input.get("command", "")
     if not isinstance(cmd, str) or not cmd:
         return None
     return cmd

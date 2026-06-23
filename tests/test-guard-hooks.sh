@@ -256,6 +256,103 @@ git -C "$bare_repo" checkout -q -b feature
   fail_msg "push: bare 'git push' on feature was blocked (expected allow)"
 rm -rf "$bare_repo"
 
+# === #132: residual fail-open / under-block gaps in the shared tokenizer ===
+# Item 1: nesting past _MAX_DEPTH (5) must fail closed, not silently allow. A
+# benign command 6 levels deep is the clean signal -- before the fix it was
+# allowed (rc=0) because the inner command was never reached.
+nested() { # depth inner
+  python3 - "$1" "$2" <<'PY'
+import sys
+def shq(s): return "'" + s.replace("'", "'\\''") + "'"
+depth, cmd = int(sys.argv[1]), sys.argv[2]
+for _ in range(depth):
+  cmd = "bash -c " + shq(cmd)
+sys.stdout.write(cmd)
+PY
+}
+expect_block "$RMRF" "$(nested 5 'rm -rf ./x')" "rm-rf nest 5 inner caught"
+expect_block "$RMRF" "$(nested 6 'ls -la')" "rm-rf nest 6 benign fails closed"
+expect_block "$SAFETY" "$(nested 6 'echo hi')" "safety nest 6 benign fails closed"
+# The same boundary must hold on the unbalanced-quote fallback path: a deep
+# wrapper shlex cannot parse (odd quote count) must fail closed, not flat-split
+# past the bound and silently drop the inner command.
+unbalanced() { # count inner -> N unclosed `bash -c '` wrappers around inner
+  local n="$1" inner="$2" out="" k
+  for ((k = 0; k < n; k++)); do out="bash -c '$out"; done
+  printf '%s%s' "$out" "$inner"
+}
+expect_block "$SAFETY" "$(unbalanced 7 'rm -rf /etc')" "safety deep unbalanced fails closed"
+expect_block "$RMRF" "$(unbalanced 7 'rm -rf ./x')" "rm-rf deep unbalanced fails closed"
+
+# timeout with no DURATION must not consume the wrapped command as the duration.
+expect_block "$SAFETY" 'timeout rm -rf /etc' "safety timeout no-duration rm"
+expect_block "$SAFETY" 'timeout mkfs.ext4 /dev/sda' "safety timeout no-duration mkfs"
+expect_block "$RMRF" 'timeout rm -rf ./x' "rm-rf timeout no-duration"
+
+# Item 3: a non-dict tool_input must fail open cleanly (rc=0), not crash to rc=1.
+for hook in "$RMRF" "$PUSH" "$SAFETY"; do
+  for payload in '{"tool_input":"x"}' '{"tool_input":null}'; do
+    rc=$(
+      printf '%s' "$payload" | "$hook" >/dev/null 2>&1
+      echo $?
+    )
+    [ "$rc" = "0" ] || fail_msg "$(basename "$hook"): non-dict tool_input rc=$rc (expected 0)"
+  done
+done
+
+# Item 4: dd/mkfs/fdisk/chmod must skip launcher prefixes and brace groups, the
+# way rm/git already do.
+expect_block "$SAFETY" 'sudo dd if=/dev/zero of=/dev/disk0' "safety sudo dd"
+expect_block "$SAFETY" 'command mkfs.ext4 /dev/sda' "safety command mkfs"
+expect_block "$SAFETY" 'env mkfs.ext4 /dev/sda' "safety env mkfs"
+expect_block "$SAFETY" 'sudo chmod -R 777 /etc' "safety sudo chmod 777"
+expect_block "$SAFETY" '{ rm -rf /etc; }' "safety brace-group rm-rf"
+expect_block "$SAFETY" '{ mkfs.ext4 /dev/sda; }' "safety brace-group mkfs"
+
+# Item 5: git push evasions -- --repo supplies the remote (so main is a
+# refspec), and --all/--mirror push every branch including main.
+expect_block "$PUSH" 'git push --repo=origin main' "push --repo= main"
+expect_block "$PUSH" 'git push --repo origin main' "push --repo separate main"
+expect_block "$PUSH" 'git push --all origin' "push --all"
+expect_block "$PUSH" 'git push --mirror origin' "push --mirror"
+expect_allow "$PUSH" 'git push --repo=origin feature' "push --repo= feature ok"
+
+# Item 6: an unbalanced-quote payload inside bash -c must still be re-scanned by
+# the fallback, not flat-split and missed.
+expect_block "$SAFETY" "bash -c 'rm -rf /etc" "safety unbalanced bash -c rm-rf"
+expect_block "$RMRF" "bash -c 'rm -rf ./build" "rm-rf unbalanced bash -c"
+
+# Item 2: a bare `git push` whose branch cannot be resolved must fail closed when
+# git itself errored, but stay allowed when simply outside a repo.
+fakebin=$(mktemp -d)
+cat >"$fakebin/git" <<'EOS'
+#!/bin/sh
+echo "fatal: kaboom" >&2
+exit 128
+EOS
+chmod +x "$fakebin/git"
+norepo=$(mktemp -d)
+cat >"$norepo/git" <<'EOS'
+#!/bin/sh
+echo "fatal: not a git repository (or any of the parent directories)" >&2
+exit 128
+EOS
+chmod +x "$norepo/git"
+nogit=$(mktemp -d)
+ln -s "$(command -v python3)" "$nogit/python3"
+push_with_path() { # pathdir cmd
+  jq -nc --arg c "$2" '{tool_name:"Bash", tool_input:{command:$c}}' |
+    PATH="$1" "$PWD_HOOK/block-push-main.py" >/dev/null 2>&1
+  echo $?
+}
+[ "$(push_with_path "$fakebin:$PATH" 'git push')" = "2" ] ||
+  fail_msg "push: bare push with git erroring did not fail closed (expected block)"
+[ "$(push_with_path "$nogit" 'git push')" = "2" ] ||
+  fail_msg "push: bare push with git absent did not fail closed (expected block)"
+[ "$(push_with_path "$norepo:$PATH" 'git push')" = "0" ] ||
+  fail_msg "push: bare push outside a repo should be allowed (expected rc=0)"
+rm -rf "$fakebin" "$norepo" "$nogit"
+
 if [ "$fail" -eq 0 ]; then
   echo "test-guard-hooks: PASS"
 else
