@@ -345,11 +345,14 @@ def _is_octal_world_writable(mode: str) -> bool:
     return int(mode, 8) & 0o777 == 0o777
 
 
-# A symbolic chmod clause: a `who` (`[ugoa]*`) then one or more op groups
-# (`[-+=][perms]`), e.g. `o+w`, `a=rwx`, `=rwx`, `a-x+w` (a single clause can
-# chain ops). Comma joins separate clauses, split before this is applied.
-_RE_SYMBOLIC_CLAUSE = re.compile(r"^([ugoa]*)((?:[-+=][rwxXst]*)+)$")
-_RE_SYMBOLIC_OP = re.compile(r"([-+=])([rwxXst]*)")
+# A symbolic chmod clause: a `who` (`[ugoa]*`) then one or more op groups, e.g.
+# `o+w`, `a=rwx`, `=rwx`, `a-x+w` (a single clause can chain ops). Each op's
+# argument is either a literal perm set (`[rwxXst]*`) or a single reference
+# letter (`[ugo]`, the reference-copy form `o=u` -- copy owner's bits to other);
+# the reference is matched first so `=u` is read as a copy, not an empty perm
+# set. Comma joins separate clauses, split before this is applied.
+_RE_SYMBOLIC_CLAUSE = re.compile(r"^([ugoa]*)((?:[-+=](?:[ugo]|[rwxXst]*))+)$")
+_RE_SYMBOLIC_OP = re.compile(r"([-+=])([ugo]|[rwxXst]*)")
 # chmod's own short flags, stripped off a bundled token to reach the mode.
 _CHMOD_FLAG_LETTERS = "RvfchHLP"
 
@@ -359,8 +362,10 @@ def _clause_world_writable(clause: str) -> bool:
 
     `o+w`, `a+rwx`, `a=rwx`, a bare-`who` `=rwx`/`+w` (applies to all), and a
     multi-op clause that grants write somewhere (`a-x+w`) all count; `u+w`/`g+w`
-    (owner/group only) and pure `-` removals do not. A grant anywhere in the
-    clause is treated as world-writable -- erring toward blocking.
+    (owner/group only) and pure `-` removals do not. A reference-copy to other/all
+    from owner or group (`o=u`, `a=g`) may carry that source's write bit, so it
+    counts too. A grant anywhere in the clause is treated as world-writable --
+    erring toward blocking.
     """
     match = _RE_SYMBOLIC_CLAUSE.match(clause)
     if match is None:
@@ -369,7 +374,8 @@ def _clause_world_writable(clause: str) -> bool:
     if not (who == "" or "o" in who or "a" in who):
         return False
     return any(
-        op in "+=" and "w" in perms for op, perms in _RE_SYMBOLIC_OP.findall(ops)
+        op in "+=" and ("w" in perms or perms in ("u", "g"))
+        for op, perms in _RE_SYMBOLIC_OP.findall(ops)
     )
 
 

@@ -225,6 +225,22 @@ def segments(tokens: list[str]):
         yield seg
 
 
+def _carries_command_string(token: str) -> bool:
+    """True if `token` makes a shell wrapper read its command from the *next*
+    token: a bare `-c`, or a combined short-flag bundle ending in `c`
+    (`-lc`, `-ec`, `-xc`, `-ic`).
+
+    This predicate is security-relevant and shared by both the balanced
+    (`nested_payloads`) and the unbalanced-quote fallback (`fallback_payload`)
+    paths, so the two cannot drift: a form one path unwraps but the other misses
+    is exactly where a wrapped payload becomes a bypass. A `--long` option never
+    qualifies (`token[1] != "-"`).
+    """
+    return token == "-c" or (
+        len(token) > 1 and token[0] == "-" and token[1] != "-" and token.endswith("c")
+    )
+
+
 def nested_payloads(seg: list[str]):
     """Yield nested command strings carried by `bash -c`/`eval`/... in `seg`."""
     if not seg:
@@ -232,17 +248,7 @@ def nested_payloads(seg: list[str]):
     cmd_base = base(seg[0])
     if cmd_base in _SHELL_WRAPPERS:
         for i, token in enumerate(seg):
-            # `-c <cmd>`, or a combined short-flag bundle ending in `c`
-            # (`bash -lc '...'`, `-ec`, `-xc`, `-ic`), carries the command
-            # string in the next token. Matching only `-c` let those wrappers
-            # smuggle a payload past every check.
-            is_dash_c = token == "-c" or (
-                len(token) > 1
-                and token[0] == "-"
-                and token[1] != "-"
-                and token.endswith("c")
-            )
-            if is_dash_c and i + 1 < len(seg):
+            if _carries_command_string(token) and i + 1 < len(seg):
                 yield seg[i + 1]
                 break
     elif cmd_base == "eval":
@@ -263,12 +269,7 @@ def fallback_payload(seg: list[str]) -> str:
     cmd_base = base(seg[0])
     if cmd_base in _SHELL_WRAPPERS:
         for i, token in enumerate(seg):
-            if token == "-c" or (
-                len(token) > 1
-                and token[0] == "-"
-                and token[1] != "-"
-                and token.endswith("c")
-            ):
+            if _carries_command_string(token):
                 return " ".join(seg[i + 1 :])
         return ""
     if cmd_base == "eval":

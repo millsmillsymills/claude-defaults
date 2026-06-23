@@ -197,6 +197,14 @@ expect_block "$SAFETY" 'chmod -R a-x+w /etc' "safety chmod a-x+w multi-op"
 expect_block "$SAFETY" 'chmod -R o+w-x /etc' "safety chmod o+w-x multi-op"
 expect_block "$SAFETY" 'chmod -R u-w,o-x+w /etc' "safety chmod multi-clause world"
 expect_allow "$SAFETY" 'chmod -R u+w-x /etc' "safety chmod u+w-x owner only"
+# #142: reference-copy clauses (`o=u`) copy a source's bits to other/all and may
+# carry that source's write bit -- world-write grants this layer must model.
+expect_block "$SAFETY" 'chmod -R o=u /etc' "safety chmod o=u ref-copy to other"
+expect_block "$SAFETY" 'chmod -R a=g /etc' "safety chmod a=g ref-copy to all"
+expect_block "$SAFETY" 'chmod -R o+u /etc' "safety chmod o+u ref-copy add"
+# A reference copy that does not reach other/all stays allowed (owner/group only).
+expect_allow "$SAFETY" 'chmod -R u=g /etc' "safety chmod u=g owner from group"
+expect_allow "$SAFETY" 'chmod -R g=u /etc' "safety chmod g=u group from owner"
 # #137: nested braces whose only literal prefix is `/` still resolve to a root.
 # shellcheck disable=SC2016
 expect_block "$SAFETY" 'rm -rf /{etc,x{a..b}}' "safety nested brace /{etc,x{a..b}}"
