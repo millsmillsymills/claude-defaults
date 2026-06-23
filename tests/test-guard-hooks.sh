@@ -110,6 +110,10 @@ expect_allow "$SAFETY" "bash -c 'echo \"rm -rf /\"'" "safety bash -c echo litera
 expect_block "$SAFETY" "bash -lc 'rm -rf /'" "safety bash -lc rm-rf"
 expect_block "$SAFETY" "sh -ec 'rm -rf ~'" "safety sh -ec rm-rf"
 expect_block "$SAFETY" "bash -xc 'mkfs.ext4 /dev/sda'" "safety bash -xc mkfs"
+# #142: the command flag need not be last in the bundle -- `-cl` is `-c -l`.
+expect_block "$SAFETY" "bash -cl 'rm -rf /'" "safety bash -cl rm-rf"
+expect_block "$SAFETY" "bash -cx 'mkfs.ext4 /dev/sda'" "safety bash -cx mkfs"
+expect_block "$SAFETY" "bash -cl 'rm -rf /etc" "safety bash -cl unbalanced fallback"
 expect_allow "$SAFETY" "bash -lc 'ls -la'" "safety bash -lc benign"
 # Newline-separated destructive payloads must not slip past on line 2 onward.
 expect_block "$SAFETY" $'echo hi\nrm -rf /Users/x' "safety rm-rf home after newline"
@@ -202,9 +206,13 @@ expect_allow "$SAFETY" 'chmod -R u+w-x /etc' "safety chmod u+w-x owner only"
 expect_block "$SAFETY" 'chmod -R o=u /etc' "safety chmod o=u ref-copy to other"
 expect_block "$SAFETY" 'chmod -R a=g /etc' "safety chmod a=g ref-copy to all"
 expect_block "$SAFETY" 'chmod -R o+u /etc' "safety chmod o+u ref-copy add"
+# Multi-letter reference copies (BSD chmod) must also be modeled.
+expect_block "$SAFETY" 'chmod -R o=ug /etc' "safety chmod o=ug multi-ref to other"
+expect_block "$SAFETY" 'chmod -R o=gu /etc' "safety chmod o=gu multi-ref to other"
 # A reference copy that does not reach other/all stays allowed (owner/group only).
 expect_allow "$SAFETY" 'chmod -R u=g /etc' "safety chmod u=g owner from group"
 expect_allow "$SAFETY" 'chmod -R g=u /etc' "safety chmod g=u group from owner"
+expect_allow "$SAFETY" 'chmod -R o=o /etc' "safety chmod o=o self ref no grant"
 # #137: nested braces whose only literal prefix is `/` still resolve to a root.
 # shellcheck disable=SC2016
 expect_block "$SAFETY" 'rm -rf /{etc,x{a..b}}' "safety nested brace /{etc,x{a..b}}"

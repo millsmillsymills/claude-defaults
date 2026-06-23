@@ -227,8 +227,10 @@ def segments(tokens: list[str]):
 
 def _carries_command_string(token: str) -> bool:
     """True if `token` makes a shell wrapper read its command from the *next*
-    token: a bare `-c`, or a combined short-flag bundle ending in `c`
-    (`-lc`, `-ec`, `-xc`, `-ic`).
+    token: a bare `-c`, or a combined short-flag bundle containing `c`
+    (`-lc`, `-cl`, `-ec`, `-xc`, `-ic`). The `c` need not be last -- `bash -cl`
+    is `-c -l` and still reads the command from the next token, so requiring it
+    at the end let `-cl`/`-cx` smuggle a payload past every check.
 
     This predicate is security-relevant and shared by both the balanced
     (`nested_payloads`) and the unbalanced-quote fallback (`fallback_payload`)
@@ -236,9 +238,7 @@ def _carries_command_string(token: str) -> bool:
     is exactly where a wrapped payload becomes a bypass. A `--long` option never
     qualifies (`token[1] != "-"`).
     """
-    return token == "-c" or (
-        len(token) > 1 and token[0] == "-" and token[1] != "-" and token.endswith("c")
-    )
+    return len(token) > 1 and token[0] == "-" and token[1] != "-" and "c" in token[1:]
 
 
 def nested_payloads(seg: list[str]):

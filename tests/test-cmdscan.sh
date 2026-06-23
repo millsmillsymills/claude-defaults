@@ -73,7 +73,8 @@ check(["rm", "-rf", "/etc"] in segs, "fallback recurses into bash -c payload")
 # one wrapper-flag predicate, so they must agree on which forms carry a command
 # string. A form unwrapped by one but missed by the other is where the fallback
 # path turns into a bypass. Drive the same forms through both.
-for flag in ("-c", "-lc", "-ec", "-xc", "-ic", "-lec"):
+# `c` need not be last: `-cl` is `-c -l` and still carries the command.
+for flag in ("-c", "-lc", "-cl", "-ec", "-xc", "-cx", "-ic", "-lec"):
   seg = ["bash", flag, "rm -rf /etc"]
   check(list(c.nested_payloads(seg)) == ["rm -rf /etc"], f"nested unwraps {flag}")
   check(c.fallback_payload(seg) == "rm -rf /etc", f"fallback unwraps {flag}")
