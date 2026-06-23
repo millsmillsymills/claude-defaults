@@ -20,6 +20,11 @@ import shlex
 # Operators that terminate one command segment and begin the next. `(`/`)` are
 # included so a subshell's contents are judged as their own segment.
 _OPERATORS = {"&&", "||", ";", "|", "&", "\n", "(", ")"}
+# The individual characters those operators are built from. shlex groups a run
+# of adjacent punctuation into one token, so a newline next to another operator
+# arrives as `|\n`, `&&\n`, or `\n\n`; a token made up only of these chars is a
+# separator even when it isn't a member of `_OPERATORS` verbatim.
+_SEPARATOR_CHARS = frozenset("&|;\n()")
 _SHELL_WRAPPERS = {"bash", "sh", "zsh", "dash", "ksh"}
 # Redirection operators consume the following token (their target), which is not
 # an argument of the command. Dropping the pair keeps a redirect target like
@@ -109,11 +114,17 @@ def tokenize(cmd: str) -> list[str]:
     separator was never examined. `punctuation_chars=True` makes shlex emit `;`,
     `&`, `|`, `(`, `)` as their own tokens regardless of spacing. `commenters=""`
     mirrors `shlex.split` so a `#` mid-command is not treated as a comment.
+
+    Newline is added to the punctuation set and removed from the whitespace set
+    so a command split only by a newline (`echo hi\nrm -rf /etc`) is parsed as
+    two segments. shlex's default whitespace swallows `\n`, which let any
+    command on a later line slip past every check unexamined.
     Raises `ValueError` on unbalanced quotes (the caller falls back).
     """
-    lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+    lex = shlex.shlex(cmd, posix=True, punctuation_chars="();<>|&\n")
     lex.whitespace_split = True
     lex.commenters = ""
+    lex.whitespace = lex.whitespace.replace("\n", "")
     return list(lex)
 
 
@@ -121,7 +132,7 @@ def segments(tokens: list[str]):
     """Split a token list into command segments on shell operators."""
     seg: list[str] = []
     for token in tokens:
-        if token in _OPERATORS:
+        if token in _OPERATORS or set(token) <= _SEPARATOR_CHARS:
             if seg:
                 yield seg
                 seg = []

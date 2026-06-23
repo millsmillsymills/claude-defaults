@@ -49,6 +49,10 @@ expect_block "$RMRF" 'cp -r a b && rm -rf /tmp/x' "rm-rf real rm-rf after cp -r"
 # Wrapper bypass: a payload inside bash -c must not slip past the guard.
 expect_block "$RMRF" "bash -c 'rm -rf ./build'" "rm-rf wrapped in bash -c"
 expect_block "$RMRF" "true;rm -rf ./build" "rm-rf after unspaced separator"
+# Newline as the sole separator: shlex used to swallow it, hiding line 2 onward.
+expect_block "$RMRF" $'echo hi\nrm -rf ./build' "rm-rf after newline"
+expect_block "$RMRF" $'echo a\n\nrm -rf ./build' "rm-rf after blank line"
+expect_block "$RMRF" $'echo a|\nrm -rf ./build' "rm-rf after pipe then newline"
 
 # === H1: block-push-main.py -- remotes with digits/dots and refspec forms ===
 PUSH="hooks/block-push-main.py"
@@ -72,6 +76,8 @@ expect_allow "$PUSH" 'git push -u origin feature' "push -u feature branch"
 expect_allow "$PUSH" 'git status' "push benign status"
 # Wrapper bypass: a push to main inside bash -c must not slip past the guard.
 expect_block "$PUSH" "bash -c 'git push origin main'" "push main wrapped in bash -c"
+expect_block "$PUSH" $'echo x\ngit push origin main' "push main after newline"
+expect_allow "$PUSH" $'echo x\ngit push origin feature' "push feature after newline ok"
 
 # === H2: safety-block.py -- destructive commands, incl. wrapped payloads ===
 SAFETY="hooks/safety-block.py"
@@ -105,6 +111,10 @@ expect_block "$SAFETY" "bash -lc 'rm -rf /'" "safety bash -lc rm-rf"
 expect_block "$SAFETY" "sh -ec 'rm -rf ~'" "safety sh -ec rm-rf"
 expect_block "$SAFETY" "bash -xc 'mkfs.ext4 /dev/sda'" "safety bash -xc mkfs"
 expect_allow "$SAFETY" "bash -lc 'ls -la'" "safety bash -lc benign"
+# Newline-separated destructive payloads must not slip past on line 2 onward.
+expect_block "$SAFETY" $'echo hi\nrm -rf /Users/x' "safety rm-rf home after newline"
+expect_block "$SAFETY" $'echo hi\nmkfs.ext4 /dev/sda' "safety mkfs after newline"
+expect_block "$SAFETY" $'echo hi\ndd if=/dev/zero of=/dev/disk0' "safety dd after newline"
 # #52: a `+refspec` is a force update even without -f; block protected targets.
 expect_block "$SAFETY" 'git push origin +main' "safety +refspec force main"
 expect_block "$SAFETY" 'git push origin +HEAD:master' "safety +refspec force master"
