@@ -104,6 +104,34 @@ expect_allow "$SAFETY" "bash -lc 'ls -la'" "safety bash -lc benign"
 expect_block "$SAFETY" 'git push origin +main' "safety +refspec force main"
 expect_block "$SAFETY" 'git push origin +HEAD:master' "safety +refspec force master"
 expect_allow "$SAFETY" 'git push origin +myfeature' "safety +refspec feature ok"
+# #126: glob targets the shell would expand to a protected dir.
+expect_block "$SAFETY" 'rm -rf /us*' "safety glob /us*"
+expect_block "$SAFETY" 'rm -rf /e*' "safety glob /e*"
+expect_block "$SAFETY" 'rm -rf /[e]tc' "safety glob /[e]tc"
+expect_block "$SAFETY" 'rm -rf /{etc,usr}' "safety brace /{etc,usr}"
+# #126: leading path-normalization forms (// and /.).
+expect_block "$SAFETY" 'rm -rf //etc' "safety leading double slash"
+expect_block "$SAFETY" 'rm -rf /./etc' "safety leading dot segment"
+expect_block "$SAFETY" 'rm -rf //' "safety bare double slash"
+# #126: variable/tilde forms. The literal ${HOME} must reach the hook unexpanded.
+# shellcheck disable=SC2016
+expect_block "$SAFETY" 'rm -rf ${HOME}' "safety braced HOME"
+# shellcheck disable=SC2016
+expect_block "$SAFETY" 'rm -rf ${HOME}/x' "safety braced HOME child"
+expect_block "$SAFETY" 'rm -rf ~root' "safety tilde-user root"
+# #126: extra launchers and arg-consuming wrappers.
+expect_block "$SAFETY" 'doas rm -rf /etc' "safety doas rm-rf"
+expect_block "$SAFETY" 'timeout 5 rm -rf /etc' "safety timeout wrapper"
+expect_block "$SAFETY" 'xargs rm -rf /etc' "safety xargs wrapper"
+expect_block "$SAFETY" 'nice -n 5 rm -rf /etc' "safety nice -n wrapper"
+# #126: combined chmod mode-flag token bypasses.
+expect_block "$SAFETY" 'chmod -R=777 /etc' "safety chmod -R=777"
+expect_block "$SAFETY" 'chmod -Rf777 /etc' "safety chmod -Rf777 bundle"
+# #126: legitimate nearby cases must stay allowed (not over-broad).
+expect_allow "$SAFETY" 'rm -rf ./build' "safety rm-rf local build"
+expect_allow "$SAFETY" 'rm -rf /tmp/whatever' "safety rm-rf tmp path"
+expect_allow "$SAFETY" 'timeout 5 echo hi' "safety timeout benign"
+expect_allow "$SAFETY" 'rm -rf /usr-local-mirror' "safety non-protected prefix"
 # #52: a non-string command must fail open (exit 0), never crash with rc=1.
 [ "$(
   jq -nc '{tool_name:"Bash", tool_input:{command:123}}' | "$SAFETY" >/dev/null 2>&1

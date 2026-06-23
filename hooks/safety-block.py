@@ -34,15 +34,20 @@ _SHELL_WRAPPERS = {"bash", "sh", "zsh", "dash", "ksh"}
 # behind a token the checks don't recognize.
 _RM_LAUNCHERS = {
     "sudo",
+    "doas",
     "command",
     "env",
     "nohup",
-    "nice",
     "stdbuf",
     "time",
     "ionice",
     "setsid",
 }
+# Launchers that consume option args before the real command. `timeout 5 rm`,
+# `nice -n 5 rm`, and `xargs rm` all interpose tokens (a duration, a flag's
+# value, xargs options) that the plain launcher skip would mistake for the
+# command. Skip the launcher, its dash-flags, and the operand each consumes.
+_ARG_WRAPPERS = {"timeout", "nice", "xargs"}
 # Redirection operators consume the following token (their target), which is not
 # an argument of the command. Dropping the pair keeps a redirect target like
 # `> /var/log/x` from being mistaken for a destructive command's operand.
@@ -82,16 +87,69 @@ def _base(token: str) -> str:
     return token.rsplit("/", 1)[-1]
 
 
+def _expand_home_vars(token: str) -> str:
+    """Rewrite home references to a canonical `~` form for matching.
+
+    Covers `$HOME`, `${HOME}`, and `~user` (a tilde with a username, which the
+    shell expands to that user's home). Bare `~` and `~/...` already match.
+    """
+    for var in ("${HOME}", "$HOME"):
+        if token == var:
+            return "~"
+        if token.startswith(var + "/"):
+            return "~/" + token[len(var) + 1 :]
+    if token.startswith("~") and len(token) > 1 and token[1] not in "/":
+        return "~"  # `~root`, `~admin`: a named user's home directory
+    return token
+
+
+def _normalize_leading(path: str) -> str:
+    """Collapse leading `//` and resolve leading `/.` segments, string-only.
+
+    POSIX treats exactly `//` as implementation-defined, but for *matching* a
+    destructive target it is the same root as `/`, so collapse it. Interior
+    `..`/`.` resolution is handled elsewhere; this only fixes the leading forms
+    (`//etc`, `/./etc`) that escaped the prefix checks. No filesystem access.
+    """
+    if not path.startswith("/"):
+        return path
+    rest = path.lstrip("/")
+    while rest.startswith("./") or rest == ".":
+        rest = rest[2:]
+    return "/" + rest
+
+
+def _glob_reaches(token: str, target: str) -> bool:
+    """True if `/<glob>` could expand to `target` (string-level, no FS access).
+
+    Treats `*`/`?` as wildcards and `[...]`/`{...}` as one matching char, so
+    `/us*`, `/e*`, `/[e]tc`, and `/{etc,usr}` are recognized as reaching a
+    protected root without touching the filesystem.
+    """
+    if not any(c in token for c in "*?[{"):
+        return False
+    pattern = re.escape(token)
+    pattern = pattern.replace(r"\*", ".*").replace(r"\?", ".")
+    pattern = re.sub(r"\\\[.*?\\\]", ".", pattern)
+    pattern = re.sub(r"\\\{.*?\\\}", ".*", pattern)
+    return re.fullmatch(pattern, target) is not None
+
+
 def _is_protected_target(token: str) -> bool:
     """True if `token` names root, a system dir, the home dir, or a child.
 
-    Covers the bare path, a root/system glob (`/*`, `/usr/*`), and children
-    (`/etc/cron.d`). The narrow original set (only `/`, `/Users`, `~`) let
-    `rm -rf /*`, `rm -rf /etc`, and friends through.
+    Covers the bare path, root/system globs (`/*`, `/us*`, `/{etc,usr}`),
+    children (`/etc/cron.d`), home variable/tilde forms (`${HOME}`, `~root`),
+    and leading path-normalization forms (`//etc`, `/./etc`). The narrow
+    original set (only `/`, `/Users`, `~`) let all of these through.
     """
+    token = _normalize_leading(_expand_home_vars(token))
     if token in ("/", "/*", "/Users", "~", "$HOME"):
         return True
     if token.startswith(("/Users/", "~/", "$HOME/")):
+        return True
+    protected_roots = ("/",) + _PROTECTED_SYSTEM_DIRS
+    if any(_glob_reaches(token, root) for root in protected_roots):
         return True
     return any(
         token == d or token == d + "/*" or token.startswith(d + "/")
@@ -139,11 +197,39 @@ def _rm_invocation(seg: list[str]) -> int:
     match let every one of those forms through.
     """
     i = 0
-    while i < len(seg) and (seg[i] in _RM_LAUNCHERS or _RE_ENV.match(seg[i])):
-        i += 1
+    while i < len(seg):
+        token = seg[i]
+        if token in _RM_LAUNCHERS or _RE_ENV.match(token):
+            i += 1
+        elif _base(token) in _ARG_WRAPPERS:
+            i = _skip_wrapper_args(seg, i + 1)
+        else:
+            break
     if i < len(seg) and _base(seg[i]) == "rm":
         return i
     return -1
+
+
+def _skip_wrapper_args(seg: list[str], i: int) -> int:
+    """Advance past an arg-consuming wrapper's options to the wrapped command.
+
+    Skips leading dash-flags (and the operand a value-taking flag like
+    `nice -n 5` consumes) plus a single bare positional (`timeout`'s duration),
+    stopping at the first token that looks like the real command.
+    """
+    while i < len(seg) and seg[i].startswith("-"):
+        flag = seg[i]
+        i += 1
+        if flag in ("-n", "--adjustment") and i < len(seg):
+            i += 1  # the numeric value `nice -n 5` consumes
+    if i < len(seg) and _base(seg[i]) not in _RM_LAUNCHERS and _is_duration(seg[i]):
+        i += 1  # `timeout 5 rm`: the leading duration positional
+    return i
+
+
+def _is_duration(token: str) -> bool:
+    """True for a `timeout` duration like `5`, `1.5`, or `30s`/`5m`/`2h`."""
+    return re.fullmatch(r"\d+(?:\.\d+)?[smhd]?", token) is not None
 
 
 def _is_rm_rf_protected(seg: list[str]) -> bool:
@@ -208,7 +294,15 @@ def _is_chmod_recursive(token: str) -> bool:
 
 
 def _is_world_writable_mode(token: str) -> bool:
-    """True for an octal mode granting rwx to all (`777`, `0777`, `1777`, ...)."""
+    """True for an octal mode granting rwx to all (`777`, `0777`, `1777`, ...).
+
+    Also unwraps a mode fused into a flag token -- `chmod -R=777` and the
+    `-Rf777` short bundle carry the mode inside the dash token, which the bare
+    octal check never saw.
+    """
+    if token.startswith("-"):
+        match = re.search(r"=?([0-7]+)$", token)
+        token = match.group(1) if match else ""
     if not token or any(c not in "01234567" for c in token):
         return False
     return int(token, 8) & 0o777 == 0o777
