@@ -113,7 +113,7 @@ def _log_guard_error(
         try:
             print(
                 f"WARNING: {hook_name} could not write hook-errors.log "
-                f"({log_exc!r}); the scan-crash audit trail was lost.",
+                f"({log_exc!r}); the fail-closed audit trail was lost.",
                 file=sys.stderr,
             )
         except OSError:
