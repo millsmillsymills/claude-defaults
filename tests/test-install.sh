@@ -181,6 +181,21 @@ bk=$(cat "$TEST_HOME5B/.claude/backups/pre-claude-defaults-"*/mcp.json 2>/dev/nu
 export HOME="$HOME2_OLD"
 rm -rf "$TEST_HOME5B"
 
+# #127: mcp WITHOUT --force over a DANGLING ~/.mcp.json symlink must skip. `-f`
+# follows the link and reads false for a dead target, so the early guard must
+# also test `-L`; otherwise the symlink-replacement block destructively replaces
+# the link without --force.
+TEST_HOME5C=$(mktemp -d -t claude-defaults-mcpdangle.XXXXXX)
+export HOME="$TEST_HOME5C"
+mkdir -p "$TEST_HOME5C/.claude"
+ln -s "$TEST_HOME5C/does-not-exist.json" "$TEST_HOME5C/.mcp.json"
+bash "$REPO_DIR/scripts/install.sh" mcp >/dev/null || fail_msg "#127: mcp over dangling symlink failed"
+[ -L "$TEST_HOME5C/.mcp.json" ] || fail_msg "#127: dangling symlink replaced without --force"
+[ "$(readlink "$TEST_HOME5C/.mcp.json")" = "$TEST_HOME5C/does-not-exist.json" ] || fail_msg "#127: dangling symlink target changed"
+[ -e "$TEST_HOME5C/does-not-exist.json" ] && fail_msg "#127: file written through dangling symlink"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME5C"
+
 # M7/M8: uninstall must reverse files install created fresh (no prior backup).
 TEST_HOME6=$(mktemp -d -t claude-defaults-reverse.XXXXXX)
 export HOME="$TEST_HOME6"

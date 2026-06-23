@@ -355,20 +355,20 @@ echo "$ms_input" | CLAUDE_LOG_ROTATE_BYTES=64 bash hooks/log-tool-calls.sh pre
 ms_gz_count=$(count_files "${ms_log}".*.gz)
 [ "$ms_gz_count" -ge 1 ] || fail_msg "mid-session pre call did not rotate oversize log"
 
-# === existing block-rm-rf.sh / block-push-main.sh (regression) ===
-echo "  testing legacy block hooks"
-bash hooks/block-rm-rf.sh <<<'{"tool_input":{"command":"rm -rf /tmp"}}'
+# === block-rm-rf.py / block-push-main.py (regression) ===
+echo "  testing block hooks"
+hooks/block-rm-rf.py <<<'{"tool_input":{"command":"rm -rf /tmp"}}'
 rc=$?
-[ "$rc" -eq 2 ] || fail_msg "block-rm-rf.sh regression: did not block"
-bash hooks/block-rm-rf.sh <<<'{"tool_input":{"command":"ls -la"}}'
+[ "$rc" -eq 2 ] || fail_msg "block-rm-rf.py regression: did not block"
+hooks/block-rm-rf.py <<<'{"tool_input":{"command":"ls -la"}}'
 rc=$?
-[ "$rc" -eq 0 ] || fail_msg "block-rm-rf.sh regression: blocked safe command"
-bash hooks/block-push-main.sh <<<'{"tool_input":{"command":"git push origin main"}}'
+[ "$rc" -eq 0 ] || fail_msg "block-rm-rf.py regression: blocked safe command"
+hooks/block-push-main.py <<<'{"tool_input":{"command":"git push origin main"}}'
 rc=$?
-[ "$rc" -eq 2 ] || fail_msg "block-push-main.sh regression: did not block"
-bash hooks/block-push-main.sh <<<'{"tool_input":{"command":"git push origin feature"}}'
+[ "$rc" -eq 2 ] || fail_msg "block-push-main.py regression: did not block"
+hooks/block-push-main.py <<<'{"tool_input":{"command":"git push origin feature"}}'
 rc=$?
-[ "$rc" -eq 0 ] || fail_msg "block-push-main.sh regression: blocked feature push"
+[ "$rc" -eq 0 ] || fail_msg "block-push-main.py regression: blocked feature push"
 
 if [ "$fail" -eq 0 ]; then
   echo "test-hooks: PASS"
