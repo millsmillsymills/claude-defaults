@@ -208,6 +208,10 @@ expect_allow "$SAFETY" 'rm -rf /tmp/{a,b{1..2}}' "safety nested brace /tmp allow
 # materialize the whole sequence. This case returns near-instantly if bounded.
 # shellcheck disable=SC2016
 expect_block "$SAFETY" 'rm -rf /tmp{1..100000000}' "safety huge range bounded fails closed"
+# #140: an expansion exactly `limit` (256) alternatives wide is complete, not
+# truncated, so a benign non-protected target stays allowed (no fail-closed).
+# shellcheck disable=SC2016
+expect_allow "$SAFETY" 'rm -rf /srv/{0..255}' "safety brace exactly-limit benign allowed"
 
 # #52: a non-string command must fail open (exit 0), never crash with rc=1.
 [ "$(
