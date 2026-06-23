@@ -79,33 +79,89 @@ _GLOB_CHARS = "*?["
 # `~name` / `~name/...` names a user's home dir, as catastrophic to recursively
 # delete as bare `~`. A bare `~` and `~/...` are handled by the literal set.
 _RE_TILDE_USER = re.compile(r"~[A-Za-z_][A-Za-z0-9_-]*(/|$)")
-# A comma-style brace alternative (`{etc,usr}`); `{a..b}` sequences are ignored.
-_RE_BRACE = re.compile(r"\{([^{}]*,[^{}]*)\}")
+# An innermost brace (no nested braces in its body). Expanding the innermost
+# first resolves nested forms (`/{etc,x{a..b}}`) to a fixed point.
+_RE_INNERMOST_BRACE = re.compile(r"\{([^{}]*)\}")
 
 
-def _brace_expand(token: str, limit: int = 64) -> tuple[list[str], bool]:
-    """Expand comma-style brace alternatives; report whether the bound was hit.
+def _sequence_alternatives(body: str, limit: int) -> list[str] | None:
+    """Alternatives for a `{a..b}` / `{m..n}` brace sequence body, else None.
+
+    Covers single-char (`a..f`) and integer (`1..9`, `9..1`) ranges -- the forms
+    the shell expands to a literal that can reach a protected root. The range is
+    sliced to `limit + 1` *before* it is materialized, so `{1..100000000}` builds
+    a bounded list (and trips the caller's overflow -> fail-closed path) instead
+    of allocating the whole sequence and hanging the hook.
+    """
+    parts = body.split("..")
+    if len(parts) != 2:
+        return None
+    start, stop = parts
+    if re.fullmatch(r"-?[0-9]+", start) and re.fullmatch(r"-?[0-9]+", stop):
+        lo, hi, convert = int(start), int(stop), str
+    elif len(start) == 1 and len(stop) == 1:
+        lo, hi, convert = ord(start), ord(stop), chr
+    else:
+        return None
+    step = 1 if lo <= hi else -1
+    return [convert(x) for x in range(lo, hi + step, step)[: limit + 1]]
+
+
+def _brace_alternatives(body: str, limit: int) -> list[str] | None:
+    """The alternatives a single brace body expands to (comma list or sequence)."""
+    if "," in body:
+        return body.split(",")
+    return _sequence_alternatives(body, limit)
+
+
+def _brace_expand(token: str, limit: int = 256) -> tuple[list[str], bool]:
+    """Expand brace alternatives to a fixed point; report whether the bound hit.
 
     `rm -rf /{etc,usr}` reaches the hook as one literal token the shell would
-    expand to `/etc /usr`. Expanding the first brace and recursing covers nested
-    forms (`/{e,u}{tc,sr}`). A hostile `{a,b}{c,d}...` blowup would drop unchecked
-    alternatives, so on hitting `limit` the second element is True and the caller
-    fails closed rather than trusting a truncated expansion.
+    expand to `/etc /usr`. Innermost braces are expanded first, so comma lists,
+    `{a..b}` sequences, and nested combinations (`/{etc,x{a..b}}`) all resolve. A
+    hostile blowup would drop unchecked alternatives, so on hitting `limit` the
+    second element is True and the caller fails closed rather than trusting a
+    truncated expansion.
     """
-    match = _RE_BRACE.search(token)
-    if not match:
-        return [token], False
-    pre, post = token[: match.start()], token[match.end() :]
-    out: list[str] = []
+    results = [token]
     truncated = False
-    for alt in match.group(1).split(","):
-        sub, sub_truncated = _brace_expand(pre + alt + post, limit)
-        truncated = truncated or sub_truncated
-        for expanded in sub:
-            out.append(expanded)
-            if len(out) >= limit:
-                return out, True
-    return out, truncated
+    while not truncated:
+        progressed = False
+        expanded: list[str] = []
+        for item in results:
+            alts, span = _first_expandable_brace(item, limit)
+            if alts is None:
+                expanded.append(item)
+                continue
+            progressed = True
+            pre, post = item[: span[0]], item[span[1] :]
+            for alt in alts:
+                expanded.append(pre + alt + post)
+                if len(expanded) >= limit:
+                    truncated = True
+                    break
+            if truncated:
+                break
+        results = expanded
+        if not progressed:
+            break
+    return results, truncated
+
+
+def _first_expandable_brace(
+    token: str, limit: int
+) -> tuple[list[str] | None, tuple[int, int]]:
+    """The alternatives and span of the first expandable innermost brace.
+
+    Skips an innermost brace that is neither a comma list nor a sequence (a bare
+    `{abc}` the shell leaves literal), so a later expandable brace is still found.
+    """
+    for match in _RE_INNERMOST_BRACE.finditer(token):
+        alts = _brace_alternatives(match.group(1), limit)
+        if alts is not None:
+            return alts, (match.start(), match.end())
+    return None, (0, 0)
 
 
 def _normalize_leading(token: str) -> str:
@@ -154,12 +210,13 @@ def _glob_reaches_protected(token: str) -> bool:
 
 
 def _brace_prefix_reaches_protected(token: str) -> bool:
-    """A residual `{a..b}` sequence whose literal prefix only completes into a
-    protected root (`/et{c..c}` -> /etc).
+    """A residual non-expandable brace (`{abc}`) whose literal prefix only
+    completes into a protected root (`/et{c}` -> /etc).
 
-    Sequences carry no comma, so `_brace_expand` leaves them intact. A prefix of
-    `""` or `/` is too coarse to judge (it would flag a harmless `/tmp{...}`), so
-    only a more specific prefix is checked.
+    Comma lists and `{a..b}` sequences are expanded by `_brace_expand`; what
+    remains is a brace the shell leaves literal. A prefix of `""` or `/` is too
+    coarse to judge (it would flag a harmless `/tmp{...}`), so only a more
+    specific prefix is checked.
     """
     prefix = token[: token.index("{")]
     return len(prefix) > 1 and _prefix_reaches_protected_root(prefix)
@@ -168,9 +225,10 @@ def _brace_prefix_reaches_protected(token: str) -> bool:
 def _brace_reaches_protected(token: str) -> bool:
     """True if a brace token can expand to reach a protected root.
 
-    Comma alternatives are expanded and each result re-checked; a residual
-    `{a..b}` sequence falls back to the literal-prefix rule; an expansion that
-    overflows the bound fails closed rather than dropping unchecked candidates.
+    Comma lists and `{a..b}` sequences are expanded and each result re-checked;
+    a residual non-expandable brace (`{abc}`) falls back to the literal-prefix
+    rule; an expansion that overflows the bound fails closed rather than dropping
+    unchecked candidates.
     """
     expansions, truncated = _brace_expand(token)
     if truncated:
@@ -271,45 +329,78 @@ def _is_chmod_recursive(token: str) -> bool:
     return token.startswith("-") and not token.startswith("--") and "R" in token
 
 
-def _is_world_writable_mode(token: str) -> bool:
+def _is_octal_world_writable(mode: str) -> bool:
     """True for an octal mode granting rwx to all (`777`, `0777`, `1777`, ...)."""
-    if not token or any(c not in "01234567" for c in token):
+    if not mode or any(c not in "01234567" for c in mode):
         return False
-    return int(token, 8) & 0o777 == 0o777
+    return int(mode, 8) & 0o777 == 0o777
 
 
-_RE_CHMOD_BUNDLE = re.compile(r"-[A-Za-z]*=?([0-7]+)$")
+# A symbolic chmod clause: a `who` (`[ugoa]*`) then one or more op groups
+# (`[-+=][perms]`), e.g. `o+w`, `a=rwx`, `=rwx`, `a-x+w` (a single clause can
+# chain ops). Comma joins separate clauses, split before this is applied.
+_RE_SYMBOLIC_CLAUSE = re.compile(r"^([ugoa]*)((?:[-+=][rwxXst]*)+)$")
+_RE_SYMBOLIC_OP = re.compile(r"([-+=])([rwxXst]*)")
+# chmod's own short flags, stripped off a bundled token to reach the mode.
+_CHMOD_FLAG_LETTERS = "RvfchHLP"
 
 
-def _bundled_world_writable_mode(token: str) -> bool:
-    """World-writable octal mode bundled into a short-flag token.
+def _clause_world_writable(clause: str) -> bool:
+    """True for a symbolic clause that grants write to other/all.
 
-    `chmod -R777 ~` and `chmod -R=777 ~` carry the mode inside the flag token, so
-    the standalone-token mode check never sees `777`. `--long` options and a bare
-    octal token (`777`) are left to `_is_world_writable_mode`.
+    `o+w`, `a+rwx`, `a=rwx`, a bare-`who` `=rwx`/`+w` (applies to all), and a
+    multi-op clause that grants write somewhere (`a-x+w`) all count; `u+w`/`g+w`
+    (owner/group only) and pure `-` removals do not. A grant anywhere in the
+    clause is treated as world-writable -- erring toward blocking.
+    """
+    match = _RE_SYMBOLIC_CLAUSE.match(clause)
+    if match is None:
+        return False
+    who, ops = match.groups()
+    if not (who == "" or "o" in who or "a" in who):
+        return False
+    return any(
+        op in "+=" and "w" in perms for op, perms in _RE_SYMBOLIC_OP.findall(ops)
+    )
+
+
+def _chmod_mode_token(token: str) -> str:
+    """The mode portion of a chmod arg, with a leading short-flag run stripped.
+
+    `-R777` -> `777`, `-Ra=rwx` -> `a=rwx`. A `--long` option carries no mode.
     """
     if token.startswith("--"):
-        return False
-    match = _RE_CHMOD_BUNDLE.match(token)
-    return match is not None and _is_world_writable_mode(match.group(1))
+        return ""
+    if token.startswith("-"):
+        i = 1
+        while i < len(token) and token[i] in _CHMOD_FLAG_LETTERS:
+            i += 1
+        return token[i:].lstrip("=")
+    return token
+
+
+def _is_world_writable_mode(token: str) -> bool:
+    """True if `token` is a chmod mode -- octal or symbolic, standalone or bundled
+    into a short flag -- that grants write to everyone."""
+    mode = _chmod_mode_token(token)
+    if _is_octal_world_writable(mode):
+        return True
+    return any(_clause_world_writable(c) for c in mode.split(","))
 
 
 def _is_chmod_777(seg: list[str]) -> bool:
     """Recursive, world-writable `chmod` against / or the home dir.
 
-    Normalizes the mode (`0777` == `777`) and treats `--recursive` like `-R` --
-    `chmod -R 0777 ~` and `chmod --recursive 777 ~` both slipped through before.
-    A bundled `-R777`/`-R=777` token carries both the recursive flag and the
-    mode, so each predicate is checked against it independently.
+    Normalizes the mode (`0777` == `777`, octal or symbolic `a=rwx`) and treats
+    `--recursive` like `-R`. A bundled `-R777`/`-Ra=rwx` token carries both the
+    recursive flag and the mode, so each predicate is checked independently.
     """
     if "chmod" not in [_base(t) for t in seg]:
         return False
     rest = _strip_redirects(seg)
     return (
         any(_is_chmod_recursive(t) for t in rest)
-        and any(
-            _is_world_writable_mode(t) or _bundled_world_writable_mode(t) for t in rest
-        )
+        and any(_is_world_writable_mode(t) for t in rest)
         and any(_is_protected_target(t) for t in rest)
     )
 
