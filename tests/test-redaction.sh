@@ -65,6 +65,20 @@ declare -a cases=(
   'xapp-1-A012345678-9876543210-abcdef|***SLACK_APP_TOKEN***|xapp-1-A012345678'
   # #38: key-aware over-match — value patterns still fire on real secrets
   'aws_secret_access_key=wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY|aws_secret_access_key=***|wJalrXUtnFEMI'
+  # #115: space-separated CLI secret flag (only --token=value was handled)
+  '--token abc123def4567|--token ***|abc123def4567'
+  '--password hunter2value|--password ***|hunter2value'
+  # #115: quoted values (the unquoted class stops at the quote)
+  'PASSWORD="hunter2value"|PASSWORD=***|hunter2value'
+  'AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMIK7MDENGbPxRfiCYEX"|AWS_SECRET_ACCESS_KEY=***|wJalrXUtnFEMI'
+  # #115: camelCase flat assignments (no boundary before the secret word)
+  'clientSecret=hunter2value|clientSecret=***|hunter2value'
+  'accessToken="abc.def.ghi"|accessToken=***|abc.def.ghi'
+  # #115: GitHub refresh tokens (ghr_)
+  'ghr_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|***GH_TOKEN***|ghr_aaaaaaaaaaaaaaaaaaaa'
+  # #115: camelCase non-secret keys must NOT be over-redacted
+  'sortKey=ascending|sortKey=ascending|***'
+  'monkeyCount=5|monkeyCount=5|***'
 )
 
 for c in "${cases[@]}"; do
@@ -120,9 +134,14 @@ echo "$out" | jq -e '.a.b[0] | test("\\*\\*\\*")' >/dev/null ||
 tmplog=$(mktemp)
 printf '%s\n' '{"args":{"command":"export GH=ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}' >"$tmplog"
 printf '%s\n' 'this line is not json' >>"$tmplog"
+# #115: a token in a corrupt/non-JSON line must be redacted, not copied verbatim.
+printf '%s\n' 'traceback: token was ghp_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb here' >>"$tmplog"
 python3 scripts/redact-existing-logs.py "$tmplog" >/dev/null
 if grep -qF 'ghp_aaaa' "$tmplog"; then
   fail_msg "H11: secret not redacted in log file"
+fi
+if grep -qF 'ghp_bbbb' "$tmplog"; then
+  fail_msg "#115: secret in non-JSON line not redacted"
 fi
 grep -qF '***GH_TOKEN***' "$tmplog" || fail_msg "H11: redaction marker missing in log file"
 grep -qF 'this line is not json' "$tmplog" || fail_msg "H11: non-JSON line not preserved"
