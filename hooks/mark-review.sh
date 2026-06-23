@@ -4,8 +4,10 @@
 # gate-public-review.sh requires both a standard and an adversarial marker before
 # it permits an issue/PR write to a public GitHub repo. Never blocks (exit 0).
 #
-# A marker is written only when an actual review subagent finishes -- satisfying
-# the gate therefore requires dispatching the agent, not a bare `touch`.
+# This is a cooperative-workflow guardrail, not a defense against an adversarial
+# agent: markers live in agent-writable ~/.claude/state, so a bare `touch
+# review-<category>-<sid>` forges one. The gate's value is reminding a cooperating
+# session to run reviews, not making the markers unforgeable.
 #   standard:    code-reviewer
 #   adversarial: silent-failure-hunter, red-team-reviewer, security review, or any
 #                subagent whose name reads as security / red-team / adversarial.
@@ -32,9 +34,9 @@ find "$state_dir" -name 'review-*' -type f -mtime +7 -delete 2>/dev/null || true
 
 category=""
 case "$name" in
-  code-reviewer) category="standard" ;;
-  silent-failure-hunter | red-team-reviewer | security-reviewer | security-review) category="adversarial" ;;
-  *security* | *red-team* | *redteam* | *adversar*) category="adversarial" ;;
+code-reviewer) category="standard" ;;
+silent-failure-hunter | red-team-reviewer | security-reviewer | security-review) category="adversarial" ;;
+*security* | *red-team* | *redteam* | *adversar*) category="adversarial" ;;
 esac
 [ -n "$category" ] || exit 0
 
