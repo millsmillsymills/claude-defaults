@@ -262,7 +262,7 @@ install_mcp() {
     return
   fi
 
-  if [ -f "$target" ] && [ "$FORCE" != "1" ]; then
+  if { [ -e "$target" ] || [ -L "$target" ]; } && [ "$FORCE" != "1" ]; then
     skip "$target (already exists; --force to overwrite)"
     return
   fi
