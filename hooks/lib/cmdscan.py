@@ -37,15 +37,46 @@ _MAX_DEPTH = 5
 # behind a token the checks don't recognize.
 LAUNCHERS = {
     "sudo",
+    "doas",
     "command",
     "env",
     "nohup",
-    "nice",
     "stdbuf",
     "time",
     "ionice",
     "setsid",
 }
+# Launchers that carry their own arguments before the wrapped command, so the
+# bare-skip used for `sudo`/`command` would stop at the launcher's own option or
+# duration and miss the real command (`timeout 5 rm ...`, `nice -n 5 rm ...`).
+_ARG_LAUNCHERS = {"timeout", "nice", "xargs"}
+# Option flags of an arg-launcher that consume the *following* token as their
+# value (the `--flag=value` form carries its own value, so no lookahead).
+_LAUNCHER_VALUE_FLAGS = {
+    "timeout": {"-k", "--kill-after", "-s", "--signal"},
+    "nice": {"-n", "--adjustment"},
+    "xargs": {
+        "-n",
+        "-I",
+        "-i",
+        "-P",
+        "-d",
+        "-E",
+        "-s",
+        "-L",
+        "-a",
+        "--max-args",
+        "--replace",
+        "--max-procs",
+        "--delimiter",
+        "--max-lines",
+        "--arg-file",
+        "--eof",
+    },
+}
+# Arg-launchers that take a bare positional (not a flag) before the command --
+# `timeout`'s DURATION. Consumed after the option flags.
+_LAUNCHER_POSITIONALS = {"timeout": 1}
 _RE_ENV = re.compile(r"^[A-Za-z_]\w*=")
 
 
@@ -54,18 +85,51 @@ def base(token: str) -> str:
     return token.rsplit("/", 1)[-1]
 
 
+def _skip_launcher_args(seg: list[str], i: int, launcher: str) -> int:
+    """Index of the wrapped command after an arg-launcher's own arguments.
+
+    Consumes the launcher's option flags (and the value of any flag that takes
+    one as a separate token) plus any required bare positional, so the command
+    the launcher runs (`timeout 5 rm ...`, `nice -n 5 rm ...`) is reached.
+    """
+    n = len(seg)
+    value_flags = _LAUNCHER_VALUE_FLAGS.get(launcher, set())
+    while i < n and seg[i].startswith("-"):
+        flag = seg[i]
+        i += 1
+        if "=" not in flag and flag in value_flags and i < n:
+            i += 1
+    for _ in range(_LAUNCHER_POSITIONALS.get(launcher, 0)):
+        if i < n and not seg[i].startswith("-"):
+            i += 1
+    return i
+
+
 def command_index(seg: list[str], name: str) -> int:
     """Index of command `name` in `seg`, or -1 if `seg` isn't that command.
 
-    Skips leading launcher prefixes (`sudo`, `command`, `env`, ...) and
-    `VAR=value` assignments, and matches on the command *basename* so
-    `/bin/rm`, `command rm`, and `env git` are recognized -- a literal match
+    Skips leading launcher prefixes (`sudo`, `doas`, `command`, `env`, ...),
+    `VAR=value` assignments, and arg-launchers with their own arguments
+    (`timeout 5`, `nice -n 5`, `xargs`), and matches on the command *basename*
+    so `/bin/rm`, `command rm`, and `env git` are recognized -- a literal match
     let every one of those forms through.
     """
     i = 0
-    while i < len(seg) and (seg[i] in LAUNCHERS or _RE_ENV.match(seg[i])):
-        i += 1
-    if i < len(seg) and base(seg[i]) == name:
+    n = len(seg)
+    while i < n:
+        token = seg[i]
+        if _RE_ENV.match(token):
+            i += 1
+            continue
+        token_base = base(token)
+        if token_base in LAUNCHERS:
+            i += 1
+            continue
+        if token_base in _ARG_LAUNCHERS:
+            i = _skip_launcher_args(seg, i + 1, token_base)
+            continue
+        break
+    if i < n and base(seg[i]) == name:
         return i
     return -1
 
