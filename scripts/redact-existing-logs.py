@@ -67,12 +67,13 @@ def redact_file(path: str) -> tuple[int, int]:
                 if redacted != stripped:
                     changed += 1
                 out.write(redacted + "\n")
-        # mkstemp creates the temp file at 0600; carrying that into the live log
-        # via os.replace would tighten perms away from the logger's 0644.
+        # Preserve the original file's permissions: mkstemp creates the temp at
+        # 0600, but an older log may have other perms, and os.replace would
+        # otherwise swap in the temp's mode.
         try:
             original_mode = os.stat(path).st_mode & 0o777
         except OSError:
-            original_mode = 0o644
+            original_mode = 0o600
         os.chmod(tmp, original_mode)
         os.replace(tmp, path)
         success = True
