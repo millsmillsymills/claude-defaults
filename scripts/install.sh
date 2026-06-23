@@ -399,7 +399,12 @@ install_logs_dir() {
     dry "create real dir ${CLAUDE_DIR}/logs/"
     return
   fi
-  mkdir -p "${CLAUDE_DIR}/logs"
+  # 0700: tool-call logs hold command args/output (and any secret that slips
+  # redaction) and must not be readable by other local users. `mkdir -m` sets
+  # the mode at creation so the dir is never briefly world-readable; the chmod
+  # also tightens a dir left at 0755 by an earlier install.
+  [ -d "${CLAUDE_DIR}/logs" ] || mkdir -m 700 "${CLAUDE_DIR}/logs"
+  chmod 700 "${CLAUDE_DIR}/logs"
   ok "logs directory: ${CLAUDE_DIR}/logs"
 }
 

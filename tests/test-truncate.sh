@@ -82,6 +82,33 @@ python3 -c 'import json,sys; json.loads(open(sys.argv[1]).read())' "$tmp" ||
   fail_msg "case5: multibyte-boundary truncation produced invalid JSON"
 rm -f "$tmp"
 
+# Case 6 (#116): a large `args` on a pre row is trimmed to the cap. Previously
+# truncate_output only touched output.{stdout,stderr}, so args bypassed the cap.
+tmp=$(mktemp)
+bigc=$(python3 -c 'print("x" * 5000, end="")')
+payload=$(jq -nc --arg c "$bigc" '{call_id:"c6", event:"pre", args:{content:$c}}')
+echo "$payload" | CLAUDE_LOG_MAX_LINE_BYTES=1024 python3 hooks/lib/jsonl_write.py "$tmp"
+n=$(line_bytes "$tmp")
+[ "$n" -le 1044 ] || fail_msg "case6: args not trimmed, line $n bytes exceeds 1024 cap"
+grep -qF '_truncated_bytes' "$tmp" || fail_msg "case6: missing _truncated_bytes on large args"
+rm -f "$tmp"
+
+# Case 7 (#116): a freshly created log file is 0600 and its dir 0700, so other
+# local users cannot read command args/output.
+# GNU stat (-c) first; on BSD/macOS that errors and we fall back to -f. The
+# reverse order is wrong on Linux: `stat -f` there means filesystem status,
+# which succeeds with non-mode output instead of failing over to -c.
+statmode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
+tmpd=$(mktemp -d)
+logf="$tmpd/sub/tool.jsonl"
+echo '{"call_id":"c7","output":{"stdout":"hi","stderr":""}}' |
+  python3 hooks/lib/jsonl_write.py "$logf"
+[ "$(statmode "$logf")" = "600" ] ||
+  fail_msg "case7: log file mode $(statmode "$logf") (want 600)"
+[ "$(statmode "$tmpd/sub")" = "700" ] ||
+  fail_msg "case7: log dir mode $(statmode "$tmpd/sub") (want 700)"
+rm -rf "$tmpd"
+
 if [ "$fail" -eq 0 ]; then
   echo "test-truncate: PASS"
 else

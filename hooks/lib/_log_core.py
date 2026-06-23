@@ -7,10 +7,10 @@ This is the canonical home for:
   - `redact_string(s)`   : run the patterns against a single string
   - `redact_value(v)`    : recursively redact strings inside JSON values
   - `truncate_output(obj, max_bytes)`
-                         : trim `output.stdout`/`output.stderr` so the
-                           serialized line fits within `max_bytes`
+                         : trim the oversized payload (`output` on a post row,
+                           `args` on a pre row) so the line fits `max_bytes`
   - `atomic_append(path, obj)`
-                         : single-syscall O_APPEND write of a JSONL line
+                         : O_APPEND write of a JSONL line, dir 0700 / file 0600
   - `DEFAULT_MAX_LINE`   : 1 MB per-line cap
 
 The three CLI/library callers in this directory all import from here so
@@ -226,90 +226,108 @@ def redact_value(v: object) -> object:
 DEFAULT_MAX_LINE = 1024 * 1024  # 1 MB
 
 
-def truncate_output(obj: dict, max_bytes: int) -> dict:
-    """If serialized JSON would exceed `max_bytes`, trim output.{stdout,stderr}.
+_TRUNCATE_FLOOR = 256  # bytes of a string field kept in the first pass
+_TRUNCATE_MARGIN = 64  # headroom for the marker in the hard-truncate pass
 
-    Mutates and returns `obj` for convenience. Records the number of dropped
-    bytes in `output._truncated_bytes` when anything was dropped. When the
-    non-trimmable envelope (call_id, ts, args, ...) alone exceeds `max_bytes`,
-    stdout/stderr are dropped entirely and `output._truncated_oversize` is set
-    true: the line is still emitted over the cap, because nothing left here is
-    trimmable. The marker therefore never implies a cap that wasn't met.
-    """
+
+def _line_overhead(obj: dict, max_bytes: int) -> int:
+    """Bytes by which `obj` serialized as a JSONL line exceeds `max_bytes`."""
     serialized = json.dumps(obj, ensure_ascii=False)
-    overhead = len((serialized + "\n").encode("utf-8")) - max_bytes
-    if overhead <= 0:
+    return len((serialized + "\n").encode("utf-8")) - max_bytes
+
+
+def _string_field_keys(container: dict) -> list[str]:
+    """Keys of `container` whose value is a string, largest value first."""
+    sized = [
+        (k, len(v.encode("utf-8"))) for k, v in container.items() if isinstance(v, str)
+    ]
+    sized.sort(key=lambda kv: kv[1], reverse=True)
+    return [k for k, _ in sized]
+
+
+def truncate_output(obj: dict, max_bytes: int) -> dict:
+    """If serialized JSON would exceed `max_bytes`, trim the oversized payload.
+
+    Mutates and returns `obj` for convenience. The trimmable container is the
+    `output` of a post row (stdout/stderr) or the `args` of a pre row -- a large
+    `args` (e.g. a multi-MB `Write` content) was previously never trimmed, so
+    the per-line cap was silently violated. Records dropped bytes in
+    `<container>._truncated_bytes`. When the non-trimmable envelope (call_id, ts,
+    tool, ...) alone exceeds `max_bytes`, the string fields are emptied and
+    `<container>._truncated_oversize` is set true: the line is still emitted over
+    the cap because nothing left is trimmable, so the marker never implies a cap
+    that wasn't met.
+    """
+    if _line_overhead(obj, max_bytes) <= 0:
         return obj
 
-    output = obj.get("output")
-    if not isinstance(output, dict):
+    container = obj.get("output")
+    if not isinstance(container, dict):
+        container = obj.get("args")
+    if not isinstance(container, dict):
         # Nothing structured to trim; leave as-is.
         return obj
 
     truncated_total = 0
-    for key in ("stdout", "stderr"):
-        v = output.get(key)
-        if not isinstance(v, str):
-            continue
-        encoded = v.encode("utf-8")
-        if len(encoded) <= 256:
-            continue
-        # Reserve ~256 bytes of context, drop the middle.
-        keep = max(256, len(encoded) - max(0, overhead - truncated_total))
-        if keep < len(encoded):
-            output[key] = encoded[:keep].decode("utf-8", errors="replace")
-            truncated_total += len(encoded) - keep
-        # Re-check size.
-        serialized = json.dumps(obj, ensure_ascii=False)
-        if len((serialized + "\n").encode("utf-8")) <= max_bytes:
-            break
-
-    if truncated_total > 0:
-        output["_truncated_bytes"] = truncated_total
-
-    # The per-field loop respects a 256-byte floor and skips fields already at
-    # or under it, so a payload whose envelope plus two short fields still
-    # exceeds max_bytes would otherwise be written oversize. Hard-truncate
-    # below the floor (stdout first, since it is usually larger). The 64-byte
-    # margin leaves room for the marker.
-    for key in ("stdout", "stderr"):
-        serialized = json.dumps(obj, ensure_ascii=False)
-        overhead = len((serialized + "\n").encode("utf-8")) - max_bytes
+    # Pass 1: trim each string field down toward the floor, keeping a prefix.
+    for key in _string_field_keys(container):
+        overhead = _line_overhead(obj, max_bytes)
         if overhead <= 0:
             break
-        v = output.get(key)
-        if not isinstance(v, str):
+        encoded = container[key].encode("utf-8")
+        if len(encoded) <= _TRUNCATE_FLOOR:
             continue
-        encoded = v.encode("utf-8")
-        keep = max(0, len(encoded) - overhead - 64)
+        keep = max(_TRUNCATE_FLOOR, len(encoded) - overhead)
+        if keep < len(encoded):
+            container[key] = encoded[:keep].decode("utf-8", errors="replace")
+            truncated_total += len(encoded) - keep
+
+    if truncated_total > 0:
+        container["_truncated_bytes"] = truncated_total
+
+    # Pass 2: the floor in pass 1 can leave a payload of several short fields
+    # over the cap. Hard-truncate below the floor (largest first); the margin
+    # leaves room for the marker.
+    for key in _string_field_keys(container):
+        overhead = _line_overhead(obj, max_bytes)
+        if overhead <= 0:
+            break
+        encoded = container[key].encode("utf-8")
+        keep = max(0, len(encoded) - overhead - _TRUNCATE_MARGIN)
         if keep >= len(encoded):
             continue
-        output[key] = encoded[:keep].decode("utf-8", errors="replace")
-        output["_truncated_bytes"] = output.get("_truncated_bytes", 0) + (
+        container[key] = encoded[:keep].decode("utf-8", errors="replace")
+        container["_truncated_bytes"] = container.get("_truncated_bytes", 0) + (
             len(encoded) - keep
         )
 
-    # If even empty stdout/stderr cannot bring the line under max_bytes, the
+    # If even emptied string fields cannot bring the line under max_bytes, the
     # envelope alone exceeds the cap. Flag it honestly rather than letting
     # _truncated_bytes imply the per-line cap was met.
-    serialized = json.dumps(obj, ensure_ascii=False)
-    if len((serialized + "\n").encode("utf-8")) > max_bytes:
-        output["_truncated_oversize"] = True
+    if _line_overhead(obj, max_bytes) > 0:
+        container["_truncated_oversize"] = True
 
     return obj
 
 
 def atomic_append(path: str, obj: dict) -> None:
-    """Append a JSON object as one line via a single O_APPEND syscall.
+    """Append a JSON object as one line via O_APPEND.
 
-    Atomic on macOS APFS for the line sizes we produce (≤ 1 MB).
-    Caller is responsible for catching ENOSPC if it wants to silently
-    drop on disk-full.
+    The log directory is created `0700` and the file `0600`: tool-call args and
+    output (and any secret that slips redaction) must not be world-readable on a
+    multi-user host. `os.write` is looped until the whole line is flushed -- a
+    single call may write fewer bytes (signal/quota/disk), and ignoring the
+    return value would leave a truncated, non-newline-terminated record.
+
+    Atomic on macOS APFS for the line sizes we produce (≤ 1 MB). Caller is
+    responsible for catching ENOSPC if it wants to silently drop on disk-full.
     """
     line = (json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8")
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    os.makedirs(os.path.dirname(path) or ".", mode=0o700, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     try:
-        os.write(fd, line)
+        written = 0
+        while written < len(line):
+            written += os.write(fd, line[written:])
     finally:
         os.close(fd)

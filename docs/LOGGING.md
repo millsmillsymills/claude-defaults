@@ -53,8 +53,8 @@ One JSON object per line. Two row types: `pre` (written before the tool runs) an
 | `exit_status` | int | post only |
 | `duration_ms` | int \| null | post only; `null` when the pre pair file was absent (e.g. concurrent calls) -- duration is unknown, not zero |
 | `output` | object | post only; full `tool_response`, redacted, capped at 1 MB |
-| `output._truncated_bytes` | int | present on post rows where output exceeded the cap; counts bytes dropped from stdout/stderr |
-| `output._truncated_oversize` | bool | present (true) when the non-trimmable envelope alone exceeds the cap, so the line is emitted over the cap despite emptying stdout/stderr |
+| `<container>._truncated_bytes` | int | present where the payload exceeded the cap; counts bytes dropped. `<container>` is `output` on a post row, `args` on a pre row |
+| `<container>._truncated_oversize` | bool | present (true) when the non-trimmable envelope alone exceeds the cap, so the line is emitted over the cap despite emptying the string fields |
 
 ## Redaction
 
@@ -139,7 +139,7 @@ jq -r 'select(.event=="pre" and (.tool=="Edit" or .tool=="Write")) | .args.file_
 
 ## Atomicity & failure modes
 
-- Writes use a single `O_APPEND` syscall (via the helpers in `hooks/lib/_log_core.py`, exposed by both `hooks/lib/jsonl_write.py` and `hooks/lib/log_tool_call.py`). Atomic on macOS APFS for line sizes ≤ 1 MB (the truncation cap).
-- Lines exceeding 1 MB get `output.stdout`/`output.stderr` truncated with a `_truncated_bytes` marker. If the envelope (call_id, ts, args, ...) alone exceeds the cap, both fields are emptied and `_truncated_oversize` is set true -- the line is still emitted over the cap, since nothing trimmable remains.
+- Writes use an `O_APPEND` write (via the helpers in `hooks/lib/_log_core.py`, exposed by both `hooks/lib/jsonl_write.py` and `hooks/lib/log_tool_call.py`), looped until the whole line is flushed so a short write can't leave a truncated record. Atomic on macOS APFS for line sizes ≤ 1 MB (the truncation cap). The log directory is created `0700` and files `0600`, so other local users cannot read command args/output.
+- Lines exceeding 1 MB get their string fields truncated with a `_truncated_bytes` marker -- `output.stdout`/`output.stderr` on a post row, `args` values (e.g. a large `Write` content) on a pre row. If the envelope (call_id, ts, tool, ...) alone exceeds the cap, the fields are emptied and `_truncated_oversize` is set true -- the line is still emitted over the cap, since nothing trimmable remains.
 - `ENOSPC` (disk full) silently drops the line; never breaks the user's tool call.
 - All write errors wrapped in `|| true` from the bash side. Logging cannot break Claude Code.
