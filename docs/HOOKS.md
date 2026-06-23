@@ -6,7 +6,7 @@ Every hook installed by claude-defaults, what it does, and how to test it. The h
 
 Every command-type hook in `settings.json` is invoked through `run-hook.sh <name> [args]` rather than referencing the script directly (the one exception is `session-heal.sh`, wired directly -- see below). This wrapper plus a `doctor.sh` self-heal step make a missing directory or a renamed/removed hook a non-event instead of a `/bin/sh: ...: No such file or directory` failure.
 
-- **`run-hook.sh` (runtime, in every hook command).** Ensures `logs/` and `hooks/lib/` exist and resolves its own symlink back to the repo, so it can run the real script even when `~/.claude/hooks/<name>` is missing or dangling. It does **not** rewrite symlinks -- repairing the install is `doctor.sh`'s job, not the per-tool-call hot path. If the hook genuinely can't be found it warns on stderr and exits 0 (fails OPEN, so infrastructure breakage never blocks a tool call); a real hook's own exit code (including 2 to block) is propagated unchanged. When the skipped hook is a **security** hook (`safety-block.py`, `block-rm-rf.sh`, `block-push-main.sh`), or python3 is unavailable for a `.py` hook, the skip is also recorded to `logs/hook-errors.log` and warned loudly -- a never-ran guard must not be silent.
+- **`run-hook.sh` (runtime, in every hook command).** Ensures `logs/` and `hooks/lib/` exist and resolves its own symlink back to the repo, so it can run the real script even when `~/.claude/hooks/<name>` is missing or dangling. It does **not** rewrite symlinks -- repairing the install is `doctor.sh`'s job, not the per-tool-call hot path. If the hook genuinely can't be found it warns on stderr and exits 0 (fails OPEN, so infrastructure breakage never blocks a tool call); a real hook's own exit code (including 2 to block) is propagated unchanged. When the skipped hook is a **security** hook (`safety-block.py`, `block-rm-rf.sh`, `block-push-main.sh`, `gate-public-review.sh`), or python3 is unavailable for a `.py` hook, the skip is also recorded to `logs/hook-errors.log` and warned loudly -- a never-ran guard must not be silent.
 - **`session-heal.sh` (SessionStart).** Wired **directly** (not through `run-hook.sh`) so it can rebuild the wrapper's own symlink if that is what went missing. Runs `doctor.sh --quick`, appending output to `logs/session-heal.log` for a forensic trail, and never blocks startup.
 - **`scripts/doctor.sh` (manual or via SessionStart).** Prunes dangling symlinks under the managed `hooks/`, `hooks/lib/`, `commands/`, `agents/`, and `skills/` dirs (links to vanished repo targets only; foreign links are left alone), then re-links missing content. `--quick` stops there; the default also re-merges `settings.json` from the template (collapsing any duplicated hook groups and picking up renamed hooks). Idempotent. Run it after renaming or removing a hook.
 
@@ -85,6 +85,30 @@ on a later `gh pr merge` in the same session it emits JSON `additionalContext`
 reminding that merges belong in a separate session. Never blocks. Review-cycle
 sessions (no `gh pr create`) are silent. **Test:** `bash tests/test-convention-hooks.sh`.
 
+### `gate-public-review.sh` (PreToolUse Bash, exit 2)
+
+Blocks issue/PR **write** actions to a **public** GitHub repo until both a standard
+review and an adversarial review have run this session. The two reviews leave
+per-session markers (`review-standard-<sid>`, `review-adversarial-<sid>`) written by
+`mark-review.sh`; the gate refuses the write until both exist, then exits 0.
+
+- **Scope.** `gh issue create|edit|comment|close|reopen|delete|lock|unlock|pin|unpin|transfer|develop`, `gh pr create|edit|comment|close|reopen|merge|ready|review`, and `gh api` with a mutating method (`-X POST|PATCH|PUT|DELETE`) against an `/issues` or `/pulls` path. Read-only gh (`list`/`view`/`status`/`diff`/`checks`) and `gh api` GETs are never gated. Quoted `gh ...` literals are scrubbed before matching (mirrors `block-push-main.sh`).
+- **Visibility.** Repo is resolved from an explicit `--repo`/`-R` flag, else the cwd remote; `gh repo view --json visibility` is consulted once per repo per session and cached at `repovis-<sid>-<repo>` (1-day backstop sweep). `PRIVATE`/`INTERNAL` repos are exempt. If visibility can't be confirmed the write is **gated** (fail closed) -- the write needs the same network, so an offline session was going to fail anyway.
+- A blocking message names the missing review(s) and how to satisfy them. Listed in `run-hook.sh`'s `SECURITY_HOOKS`, so a missing gate is logged loudly instead of failing open. **Test:** `bash tests/test-public-review-gate.sh`.
+
+### `mark-review.sh` (PostToolUse Task, exit 0)
+
+Records that a review ran by writing a per-session marker when a review **subagent
+completes** -- so satisfying `gate-public-review.sh` requires actually dispatching the
+agent, not a bare `touch`. Maps `subagent_type` (plugin namespace stripped, case-insensitive) to a category:
+
+- **standard** -- `code-reviewer`
+- **adversarial** -- `silent-failure-hunter`, `red-team-reviewer`, a security/`security-review` agent, or any subagent whose name reads as security / red-team / adversarial
+
+Running `/pr-review:review-pr` dispatches `code-reviewer` (standard) and
+`silent-failure-hunter` (adversarial), so it satisfies both. Non-review subagents and
+non-`Task` tools write nothing. **Test:** `bash tests/test-public-review-gate.sh`.
+
 ### `stop-check-clean-repo.sh` (Stop, command, exit 2 once)
 
 Nudges to commit/clean up when a session leaves the cwd repo dirty. Gated: only
@@ -103,10 +127,12 @@ Gzip-rotate today's log if it exceeds `CLAUDE_LOG_ROTATE_BYTES` (default 100 MB)
 
 ### `cleanup-session-markers.sh` (SessionEnd)
 
-Removes this session's convention-hook markers (`pr-created-<session_id>`,
-`clean-nudged-<session_id>`) from `~/.claude/state` so they have a clear owner.
-The 7-day mtime sweep inside `warn-merge-after-pr.sh` / `stop-check-clean-repo.sh`
-remains only as a backstop for sessions that crash without a SessionEnd.
+Removes this session's per-session state (`pr-created-<sid>`, `clean-nudged-<sid>`,
+`review-standard-<sid>`, `review-adversarial-<sid>`, `repovis-<sid>-*`) from
+`~/.claude/state` so it has a clear owner. The mtime sweeps inside
+`warn-merge-after-pr.sh` / `stop-check-clean-repo.sh` / `mark-review.sh` /
+`gate-public-review.sh` remain only as a backstop for sessions that crash without a
+SessionEnd.
 **Test:** `bash tests/test-convention-hooks.sh`.
 
 ### Anti-rationalization Stop hook (`type: "prompt"`)
