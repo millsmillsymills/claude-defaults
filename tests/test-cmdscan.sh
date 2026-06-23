@@ -47,6 +47,12 @@ check(c.command_index(["ls"], "rm") == -1, "command_index non-match")
 check(list(c.nested_payloads(["bash", "-c", "rm -rf /"])) == ["rm -rf /"], "nested -c")
 check(list(c.nested_payloads(["sh", "-lc", "rm -rf /"])) == ["rm -rf /"], "nested -lc")
 check(list(c.nested_payloads(["eval", "rm", "-rf"])) == ["rm -rf"], "nested eval")
+# A wrapper behind a launcher/env prefix must still be unwrapped (the checks skip
+# the same prefixes via command_start, so the parser must agree).
+check(list(c.nested_payloads(["env", "bash", "-c", "rm -rf /"])) == ["rm -rf /"], "nested env-prefixed")
+check(list(c.nested_payloads(["FOO=1", "bash", "-lc", "rm -rf /"])) == ["rm -rf /"], "nested env-assign-prefixed")
+check(list(c.nested_payloads(["nohup", "bash", "-c", "x"])) == ["x"], "nested nohup-prefixed")
+check(list(c.nested_payloads(["timeout", "5", "bash", "-c", "x"])) == ["x"], "nested timeout-prefixed")
 
 # strip_redirects drops the operator and the target it consumes.
 check(c.strip_redirects(["rm", "-rf", "x", ">", "/dev/null"]) == ["rm", "-rf", "x"], "strip_redirects")
@@ -64,6 +70,8 @@ check(list(c.iter_segments("rm -rf x", depth=5, max_depth=5)) == [["rm", "-rf", 
 check(c.fallback_payload(["bash", "-c", "rm", "-rf", "/etc"]) == "rm -rf /etc", "fallback_payload bash -c")
 check(c.fallback_payload(["eval", "rm", "-rf"]) == "rm -rf", "fallback_payload eval")
 check(c.fallback_payload(["ls", "-la"]) == "", "fallback_payload non-wrapper")
+check(c.fallback_payload(["env", "bash", "-c", "rm", "-rf", "/etc"]) == "rm -rf /etc", "fallback_payload env-prefixed")
+check(c.fallback_payload(["FOO=1", "bash", "-c", "rm", "-rf", "/etc"]) == "rm -rf /etc", "fallback_payload env-assign-prefixed")
 
 # A wrapped payload with unbalanced quotes is re-entered by iter_segments' fallback.
 segs = list(c.iter_segments("bash -c 'rm -rf /etc"))

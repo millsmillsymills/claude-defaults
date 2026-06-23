@@ -242,17 +242,24 @@ def _carries_command_string(token: str) -> bool:
 
 
 def nested_payloads(seg: list[str]):
-    """Yield nested command strings carried by `bash -c`/`eval`/... in `seg`."""
-    if not seg:
+    """Yield nested command strings carried by `bash -c`/`eval`/... in `seg`.
+
+    The wrapper is located after launcher/env prefixes (`command_start`), so
+    `env bash -c '...'`, `FOO=1 bash -c '...'`, and `timeout 5 bash -c '...'` are
+    unwrapped too -- keying on `seg[0]` let any such prefix hide the wrapper and
+    smuggle the payload past every check.
+    """
+    start = command_start(seg)
+    if start >= len(seg):
         return
-    cmd_base = base(seg[0])
+    cmd_base = base(seg[start])
     if cmd_base in _SHELL_WRAPPERS:
-        for i, token in enumerate(seg):
-            if _carries_command_string(token) and i + 1 < len(seg):
+        for i in range(start, len(seg)):
+            if _carries_command_string(seg[i]) and i + 1 < len(seg):
                 yield seg[i + 1]
                 break
     elif cmd_base == "eval":
-        payload = " ".join(seg[1:])
+        payload = " ".join(seg[start + 1 :])
         if payload:
             yield payload
 
@@ -261,19 +268,22 @@ def fallback_payload(seg: list[str]) -> str:
     """The wrapped command string a de-quoted `bash -c`/`eval` segment carries.
 
     The fallback has already split the payload's words apart (quotes are gone),
-    so the tail is rejoined into a command string the caller re-scans. Returns
-    "" when the segment wraps nothing.
+    so the tail is rejoined into a command string the caller re-scans. The
+    wrapper is located after launcher/env prefixes (`command_start`), matching
+    `nested_payloads`, so a prefixed wrapper cannot slip past this path either.
+    Returns "" when the segment wraps nothing.
     """
-    if not seg:
+    start = command_start(seg)
+    if start >= len(seg):
         return ""
-    cmd_base = base(seg[0])
+    cmd_base = base(seg[start])
     if cmd_base in _SHELL_WRAPPERS:
-        for i, token in enumerate(seg):
-            if _carries_command_string(token):
+        for i in range(start, len(seg)):
+            if _carries_command_string(seg[i]):
                 return " ".join(seg[i + 1 :])
         return ""
     if cmd_base == "eval":
-        return " ".join(seg[1:])
+        return " ".join(seg[start + 1 :])
     return ""
 
 

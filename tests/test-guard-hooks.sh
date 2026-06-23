@@ -114,6 +114,12 @@ expect_block "$SAFETY" "bash -xc 'mkfs.ext4 /dev/sda'" "safety bash -xc mkfs"
 expect_block "$SAFETY" "bash -cl 'rm -rf /'" "safety bash -cl rm-rf"
 expect_block "$SAFETY" "bash -cx 'mkfs.ext4 /dev/sda'" "safety bash -cx mkfs"
 expect_block "$SAFETY" "bash -cl 'rm -rf /etc" "safety bash -cl unbalanced fallback"
+# #146: a wrapper behind a launcher/env prefix must not hide the payload.
+expect_block "$SAFETY" "env bash -c 'mkfs.ext4 /dev/sda'" "safety env bash -c mkfs"
+expect_block "$SAFETY" "FOO=1 bash -c 'dd if=/dev/zero of=/dev/sda'" "safety env-assign bash -c dd"
+expect_block "$SAFETY" "nohup bash -c 'rm -rf /etc'" "safety nohup bash -c rm-rf"
+expect_block "$SAFETY" "timeout 5 bash -c 'rm -rf /etc'" "safety timeout bash -c rm-rf"
+expect_block "$SAFETY" "env bash -c 'rm -rf /etc" "safety env bash -c unbalanced fallback"
 expect_allow "$SAFETY" "bash -lc 'ls -la'" "safety bash -lc benign"
 # Newline-separated destructive payloads must not slip past on line 2 onward.
 expect_block "$SAFETY" $'echo hi\nrm -rf /Users/x' "safety rm-rf home after newline"
