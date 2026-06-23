@@ -140,6 +140,12 @@ if [ -f "$MANIFEST" ]; then
       # was. Recreating the link is out of scope — just warn.
       warn "restored $arg as a regular file; it was originally a symlink to ${extra:-?} (link not recreated)"
       ;;
+    mcpsymlink)
+      # install replaced a symlinked ~/.mcp.json with a real file (so a jq
+      # write wouldn't clobber the link's target). Any backed-up content is
+      # restored by the mcpbackup entry; recreating the link is out of scope.
+      warn "$arg was originally a symlink to ${extra:-?}; install replaced it with a real file (link not recreated)"
+      ;;
     mcpbackup)
       if [ -f "$arg" ]; then
         if [ "$DRY_RUN" = "1" ]; then
