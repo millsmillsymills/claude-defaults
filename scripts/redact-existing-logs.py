@@ -27,13 +27,16 @@ from pathlib import Path
 # The path is injected at runtime, so static resolution can't see the module.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks" / "lib"))
 
-from _log_core import redact_value  # noqa: E402  # ty: ignore[unresolved-import]
+from _log_core import (  # noqa: E402  # ty: ignore[unresolved-import]
+    redact_string,
+    redact_value,
+)
 
 
 def redact_file(path: str) -> tuple[int, int]:
     """Redact one JSONL file in place.
 
-    Returns a `(lines_total, lines_changed)` pair, counting only JSON lines.
+    Returns a `(lines_total, lines_changed)` pair counting every non-empty line.
     The rewrite is atomic: a temp file in the same directory is renamed over
     the original only after every line is processed.
     """
@@ -56,9 +59,11 @@ def redact_file(path: str) -> tuple[int, int]:
                 try:
                     obj = json.loads(stripped)
                 except json.JSONDecodeError:
-                    out.write(line)  # not JSON: preserve verbatim
-                    continue
-                redacted = json.dumps(redact_value(obj), ensure_ascii=False)
+                    # Not JSON (a corrupt/legacy raw line): a token in it would
+                    # survive a verbatim copy, so run the string-level redaction.
+                    redacted = redact_string(stripped)
+                else:
+                    redacted = json.dumps(redact_value(obj), ensure_ascii=False)
                 if redacted != stripped:
                     changed += 1
                 out.write(redacted + "\n")
