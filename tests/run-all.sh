@@ -11,6 +11,7 @@ TESTS=(
   tests/test-hooks.sh
   tests/test-guard-hooks.sh
   tests/test-convention-hooks.sh
+  tests/test-public-review-gate.sh
   tests/test-hook-resilience.sh
   tests/test-install.sh
   tests/test-doctor.sh

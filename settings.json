@@ -141,6 +141,10 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/run-hook.sh warn-merge-after-pr.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/run-hook.sh gate-public-review.sh"
           }
         ]
       },
@@ -170,6 +174,15 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/run-hook.sh log-tool-calls.sh post"
+          }
+        ]
+      },
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/run-hook.sh mark-review.sh"
           }
         ]
       }
