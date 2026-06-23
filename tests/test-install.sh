@@ -163,6 +163,24 @@ mcp_backup=$(cat "$TEST_HOME5/.claude/backups/pre-claude-defaults-"*/mcp.json 2>
 export HOME="$HOME2_OLD"
 rm -rf "$TEST_HOME5"
 
+# #117: --force mcp through a SYMLINKED ~/.mcp.json must not write through the
+# link and clobber its target; it backs up the target, then replaces the link
+# with a fresh real file.
+TEST_HOME5B=$(mktemp -d -t claude-defaults-mcpsym.XXXXXX)
+export HOME="$TEST_HOME5B"
+mkdir -p "$TEST_HOME5B/.claude"
+echo '{"mcpServers":{"precious":{"command":"keep"}}}' >"$TEST_HOME5B/precious.json"
+ln -s "$TEST_HOME5B/precious.json" "$TEST_HOME5B/.mcp.json"
+bash "$REPO_DIR/scripts/install.sh" --force mcp >/dev/null || fail_msg "#117: --force mcp over symlink failed"
+got=$(jq -r '.mcpServers.precious.command // ""' "$TEST_HOME5B/precious.json" 2>/dev/null)
+[ "$got" = "keep" ] || fail_msg "#117: symlink target was clobbered (got=$got)"
+[ -L "$TEST_HOME5B/.mcp.json" ] && fail_msg "#117: ~/.mcp.json still a symlink after --force"
+[ -f "$TEST_HOME5B/.mcp.json" ] || fail_msg "#117: ~/.mcp.json not created as a real file"
+bk=$(cat "$TEST_HOME5B/.claude/backups/pre-claude-defaults-"*/mcp.json 2>/dev/null | grep -c 'precious' || true)
+[ "$bk" -ge 1 ] || fail_msg "#117: symlink target content not backed up"
+export HOME="$HOME2_OLD"
+rm -rf "$TEST_HOME5B"
+
 # M7/M8: uninstall must reverse files install created fresh (no prior backup).
 TEST_HOME6=$(mktemp -d -t claude-defaults-reverse.XXXXXX)
 export HOME="$TEST_HOME6"
