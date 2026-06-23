@@ -123,9 +123,10 @@ def _brace_expand(token: str, limit: int = 256) -> tuple[list[str], bool]:
     `rm -rf /{etc,usr}` reaches the hook as one literal token the shell would
     expand to `/etc /usr`. Innermost braces are expanded first, so comma lists,
     `{a..b}` sequences, and nested combinations (`/{etc,x{a..b}}`) all resolve. A
-    hostile blowup would drop unchecked alternatives, so on hitting `limit` the
-    second element is True and the caller fails closed rather than trusting a
-    truncated expansion.
+    hostile blowup would drop unchecked alternatives, so on a genuine overflow --
+    a candidate appended *past* the cap -- the second element is True and the
+    caller fails closed. An expansion that exactly fills `limit` is complete, not
+    truncated, so it stays allowed (mirrors `_sequence_alternatives`' slice).
     """
     results = [token]
     truncated = False
@@ -141,7 +142,7 @@ def _brace_expand(token: str, limit: int = 256) -> tuple[list[str], bool]:
             pre, post = item[: span[0]], item[span[1] :]
             for alt in alts:
                 expanded.append(pre + alt + post)
-                if len(expanded) >= limit:
+                if len(expanded) > limit:
                     truncated = True
                     break
             if truncated:
