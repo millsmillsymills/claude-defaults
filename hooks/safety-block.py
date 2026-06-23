@@ -76,6 +76,36 @@ _RE_FORK_BOMB = re.compile(r"^\s*:\s*\(\)\s*\{.*\|.*&.*\}", re.DOTALL)
 
 _HOME_TARGETS = ("/Users", "~", "$HOME", "${HOME}")
 _GLOB_CHARS = "*?["
+# `~name` / `~name/...` names a user's home dir, as catastrophic to recursively
+# delete as bare `~`. A bare `~` and `~/...` are handled by the literal set.
+_RE_TILDE_USER = re.compile(r"~[A-Za-z_][A-Za-z0-9_-]*(/|$)")
+# A comma-style brace alternative (`{etc,usr}`); `{a..b}` sequences are ignored.
+_RE_BRACE = re.compile(r"\{([^{}]*,[^{}]*)\}")
+
+
+def _brace_expand(token: str, limit: int = 64) -> tuple[list[str], bool]:
+    """Expand comma-style brace alternatives; report whether the bound was hit.
+
+    `rm -rf /{etc,usr}` reaches the hook as one literal token the shell would
+    expand to `/etc /usr`. Expanding the first brace and recursing covers nested
+    forms (`/{e,u}{tc,sr}`). A hostile `{a,b}{c,d}...` blowup would drop unchecked
+    alternatives, so on hitting `limit` the second element is True and the caller
+    fails closed rather than trusting a truncated expansion.
+    """
+    match = _RE_BRACE.search(token)
+    if not match:
+        return [token], False
+    pre, post = token[: match.start()], token[match.end() :]
+    out: list[str] = []
+    truncated = False
+    for alt in match.group(1).split(","):
+        sub, sub_truncated = _brace_expand(pre + alt + post, limit)
+        truncated = truncated or sub_truncated
+        for expanded in sub:
+            out.append(expanded)
+            if len(out) >= limit:
+                return out, True
+    return out, truncated
 
 
 def _normalize_leading(token: str) -> str:
@@ -95,27 +125,61 @@ def _normalize_leading(token: str) -> str:
     return normalized
 
 
+def _prefix_reaches_protected_root(prefix: str) -> bool:
+    """True if `prefix` can complete into a protected root.
+
+    The prefix reaches a root when the literal is a prefix of the root
+    (`/Us` -> `/Users`) or the root (or a child of it) is a prefix of the literal
+    (`/etc`). A prefix that cannot reach any root (`/usr-mirror`) stays allowed.
+    """
+    if not prefix or prefix[0] not in "/~$":
+        return False
+    for root in ("/", *_PROTECTED_SYSTEM_DIRS, *_HOME_TARGETS):
+        if root.startswith(prefix) or prefix == root or prefix.startswith(root + "/"):
+            return True
+    return False
+
+
 def _glob_reaches_protected(token: str) -> bool:
     """True if a glob's literal prefix can expand to reach a protected root.
 
     `/Us*` can expand to `/Users`, `/et*` to `/etc`, `~*` to `~` -- the glob
-    defeats a literal-path check. Compares the part before the first glob char
-    against each protected root: the glob reaches the root when the literal is a
-    prefix of the root (`/Us` -> `/Users`) or the root (or a child of it) is a
-    prefix of the literal (`/etc*`). A literal that cannot reach any root
-    (`/usr-mirror*`, `./build/*`) stays allowed.
+    defeats a literal-path check by completing the part before the first glob
+    char. `/usr-mirror*` and `./build/*` reach no root, so stay allowed.
     """
     cut = min((token.find(c) for c in _GLOB_CHARS if c in token), default=-1)
     if cut < 0:
         return False
-    prefix = token[:cut]
-    if not prefix or prefix[0] not in "/~$":
-        return False
-    roots = ("/", *_PROTECTED_SYSTEM_DIRS, *_HOME_TARGETS)
-    for root in roots:
-        if root.startswith(prefix):
-            return True
-        if prefix == root or prefix.startswith(root + "/"):
+    return _prefix_reaches_protected_root(token[:cut])
+
+
+def _brace_prefix_reaches_protected(token: str) -> bool:
+    """A residual `{a..b}` sequence whose literal prefix only completes into a
+    protected root (`/et{c..c}` -> /etc).
+
+    Sequences carry no comma, so `_brace_expand` leaves them intact. A prefix of
+    `""` or `/` is too coarse to judge (it would flag a harmless `/tmp{...}`), so
+    only a more specific prefix is checked.
+    """
+    prefix = token[: token.index("{")]
+    return len(prefix) > 1 and _prefix_reaches_protected_root(prefix)
+
+
+def _brace_reaches_protected(token: str) -> bool:
+    """True if a brace token can expand to reach a protected root.
+
+    Comma alternatives are expanded and each result re-checked; a residual
+    `{a..b}` sequence falls back to the literal-prefix rule; an expansion that
+    overflows the bound fails closed rather than dropping unchecked candidates.
+    """
+    expansions, truncated = _brace_expand(token)
+    if truncated:
+        return True
+    for expanded in expansions:
+        if "{" in expanded:
+            if _brace_prefix_reaches_protected(expanded):
+                return True
+        elif expanded != token and _is_protected_target(expanded):
             return True
     return False
 
@@ -124,8 +188,9 @@ def _is_protected_target(token: str) -> bool:
     """True if `token` names root, a system dir, the home dir, or a child.
 
     Covers the bare path, a root/system glob (`/*`, `/usr/*`), children
-    (`/etc/cron.d`), `/./` and `//` normalization, and globs whose literal
-    prefix can expand to a protected root (`/Us*`, `~*`). The narrow original
+    (`/etc/cron.d`), `/./` and `//` normalization, globs whose literal prefix
+    can expand to a protected root (`/Us*`, `~*`), `~user` home dirs, and brace
+    alternatives that reach a protected root (`/{etc,usr}`). The narrow original
     set (only `/`, `/Users`, `~`) let `rm -rf /*`, `/etc`, `/Users*` through.
     """
     token = _normalize_leading(token)
@@ -133,12 +198,16 @@ def _is_protected_target(token: str) -> bool:
         return True
     if token.startswith(("/Users/", "~/", "$HOME/", "${HOME}/")):
         return True
+    if _RE_TILDE_USER.match(token):
+        return True
     if any(
         token == d or token == d + "/*" or token.startswith(d + "/")
         for d in _PROTECTED_SYSTEM_DIRS
     ):
         return True
-    return _glob_reaches_protected(token)
+    if _glob_reaches_protected(token):
+        return True
+    return "{" in token and _brace_reaches_protected(token)
 
 
 def _is_rm_rf_protected(seg: list[str]) -> bool:
@@ -209,18 +278,38 @@ def _is_world_writable_mode(token: str) -> bool:
     return int(token, 8) & 0o777 == 0o777
 
 
+_RE_CHMOD_BUNDLE = re.compile(r"-[A-Za-z]*=?([0-7]+)$")
+
+
+def _bundled_world_writable_mode(token: str) -> bool:
+    """World-writable octal mode bundled into a short-flag token.
+
+    `chmod -R777 ~` and `chmod -R=777 ~` carry the mode inside the flag token, so
+    the standalone-token mode check never sees `777`. `--long` options and a bare
+    octal token (`777`) are left to `_is_world_writable_mode`.
+    """
+    if token.startswith("--"):
+        return False
+    match = _RE_CHMOD_BUNDLE.match(token)
+    return match is not None and _is_world_writable_mode(match.group(1))
+
+
 def _is_chmod_777(seg: list[str]) -> bool:
     """Recursive, world-writable `chmod` against / or the home dir.
 
     Normalizes the mode (`0777` == `777`) and treats `--recursive` like `-R` --
     `chmod -R 0777 ~` and `chmod --recursive 777 ~` both slipped through before.
+    A bundled `-R777`/`-R=777` token carries both the recursive flag and the
+    mode, so each predicate is checked against it independently.
     """
     if "chmod" not in [_base(t) for t in seg]:
         return False
     rest = _strip_redirects(seg)
     return (
         any(_is_chmod_recursive(t) for t in rest)
-        and any(_is_world_writable_mode(t) for t in rest)
+        and any(
+            _is_world_writable_mode(t) or _bundled_world_writable_mode(t) for t in rest
+        )
         and any(_is_protected_target(t) for t in rest)
     )
 

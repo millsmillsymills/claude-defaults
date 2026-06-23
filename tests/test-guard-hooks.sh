@@ -151,6 +151,37 @@ expect_block "$SAFETY" 'nice -n 5 rm -rf /etc' "safety nice -n rm-rf"
 expect_allow "$SAFETY" 'timeout 5 echo hi' "safety timeout echo allowed"
 expect_allow "$SAFETY" 'nice -n 5 make' "safety nice make allowed"
 expect_allow "$SAFETY" 'echo x | xargs rm -f' "safety xargs rm -f allowed"
+# #126 residual: brace expansion that reaches a protected root. The literal brace
+# must reach the hook unexpanded, so single quotes are intentional.
+# shellcheck disable=SC2016
+expect_block "$SAFETY" 'rm -rf /{etc,usr}' "safety brace /{etc,usr}"
+# shellcheck disable=SC2016
+expect_block "$SAFETY" 'rm -rf /{e,u}*' "safety brace+glob /{e,u}*"
+# shellcheck disable=SC2016
+expect_allow "$SAFETY" 'rm -rf /tmp/{a,b}' "safety brace /tmp allowed"
+# #126 residual: brace *sequences* ({a..b}) whose literal prefix only completes
+# into a protected root must block; a sequence under /tmp stays allowed.
+# shellcheck disable=SC2016
+expect_block "$SAFETY" 'rm -rf /et{c..c}' "safety brace seq /et{c..c}"
+# shellcheck disable=SC2016
+expect_block "$SAFETY" 'rm -rf /Librar{y..y}' "safety brace seq /Librar{y..y}"
+# shellcheck disable=SC2016
+expect_allow "$SAFETY" 'rm -rf /tmp/{0..9}' "safety brace seq /tmp allowed"
+# #126 residual: a comma list too large to fully expand must fail closed, not
+# silently drop the protected alternative past the bound.
+big=$(printf 'x%d,' {0..70})
+# shellcheck disable=SC2016
+expect_block "$SAFETY" "rm -rf /{${big}etc}" "safety brace overflow fails closed"
+# #126 residual: tilde-user forms name a home dir the same as bare ~.
+expect_block "$SAFETY" 'rm -rf ~root' "safety ~root"
+expect_block "$SAFETY" 'rm -rf ~nobody' "safety ~nobody"
+expect_block "$SAFETY" 'rm -rf ~root/.ssh' "safety ~root child"
+expect_allow "$SAFETY" 'rm -rf ./tmp~backup' "safety trailing tilde allowed"
+# #126 residual: chmod recursive flag and world-writable mode in one bundled token.
+expect_block "$SAFETY" 'chmod -R777 ~' "safety chmod -R777 bundle"
+expect_block "$SAFETY" 'chmod -R=777 /etc' "safety chmod -R=777 equals"
+expect_block "$SAFETY" 'chmod -fR0777 ~' "safety chmod -fR0777 bundle"
+expect_allow "$SAFETY" 'chmod -R755 ~' "safety chmod -R755 not world-writable"
 
 # #52: a non-string command must fail open (exit 0), never crash with rc=1.
 [ "$(
