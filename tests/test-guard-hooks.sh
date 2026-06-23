@@ -149,7 +149,9 @@ expect_allow "$SAFETY" 'rm -rf /tmp/x > /dev/null' "safety rm-rf tmp with redire
 # === #114 bare push on a protected branch (resolved from the checked-out repo) ===
 # A throwaway repo gives a deterministic current branch independent of CWD.
 bare_repo=$(mktemp -d)
-git -C "$bare_repo" init -q -b main && git -C "$bare_repo" commit -q --allow-empty -m init
+git -C "$bare_repo" init -q -b main &&
+  git -C "$bare_repo" -c user.email=test@example.com -c user.name=test \
+    commit -q --allow-empty -m init
 bare_rc() { # branch cmd
   git -C "$bare_repo" checkout -q "$1" 2>/dev/null
   jq -nc --arg c "$2" '{tool_name:"Bash", tool_input:{command:$c}}' |
