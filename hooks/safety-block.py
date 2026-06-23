@@ -20,6 +20,7 @@ unchecked. That one command is blocked and the crash is logged loudly.
 
 from __future__ import annotations
 
+import posixpath
 import re
 import sys
 from pathlib import Path
@@ -73,21 +74,71 @@ _PROTECTED_SYSTEM_DIRS = (
 _RE_FORK_BOMB = re.compile(r"^\s*:\s*\(\)\s*\{.*\|.*&.*\}", re.DOTALL)
 
 
+_HOME_TARGETS = ("/Users", "~", "$HOME", "${HOME}")
+_GLOB_CHARS = "*?["
+
+
+def _normalize_leading(token: str) -> str:
+    """Collapse `/./` and repeated slashes in an absolute path's lead.
+
+    `rm -rf /./etc`, `//etc`, and `/.//etc` all name `/etc`, but the literal
+    prefix check would miss them. `posixpath.normpath` resolves `.`/`..` and
+    single redundant slashes; POSIX keeps a leading `//`, so collapse that too.
+    Only absolute paths are normalized; relative paths and `~`/`$HOME` forms are
+    returned unchanged so normpath never rewrites a non-path token.
+    """
+    if not token.startswith("/"):
+        return token
+    normalized = posixpath.normpath(token)
+    while normalized.startswith("//"):
+        normalized = normalized[1:]
+    return normalized
+
+
+def _glob_reaches_protected(token: str) -> bool:
+    """True if a glob's literal prefix can expand to reach a protected root.
+
+    `/Us*` can expand to `/Users`, `/et*` to `/etc`, `~*` to `~` -- the glob
+    defeats a literal-path check. Compares the part before the first glob char
+    against each protected root: the glob reaches the root when the literal is a
+    prefix of the root (`/Us` -> `/Users`) or the root (or a child of it) is a
+    prefix of the literal (`/etc*`). A literal that cannot reach any root
+    (`/usr-mirror*`, `./build/*`) stays allowed.
+    """
+    cut = min((token.find(c) for c in _GLOB_CHARS if c in token), default=-1)
+    if cut < 0:
+        return False
+    prefix = token[:cut]
+    if not prefix or prefix[0] not in "/~$":
+        return False
+    roots = ("/", *_PROTECTED_SYSTEM_DIRS, *_HOME_TARGETS)
+    for root in roots:
+        if root.startswith(prefix):
+            return True
+        if prefix == root or prefix.startswith(root + "/"):
+            return True
+    return False
+
+
 def _is_protected_target(token: str) -> bool:
     """True if `token` names root, a system dir, the home dir, or a child.
 
-    Covers the bare path, a root/system glob (`/*`, `/usr/*`), and children
-    (`/etc/cron.d`). The narrow original set (only `/`, `/Users`, `~`) let
-    `rm -rf /*`, `rm -rf /etc`, and friends through.
+    Covers the bare path, a root/system glob (`/*`, `/usr/*`), children
+    (`/etc/cron.d`), `/./` and `//` normalization, and globs whose literal
+    prefix can expand to a protected root (`/Us*`, `~*`). The narrow original
+    set (only `/`, `/Users`, `~`) let `rm -rf /*`, `/etc`, `/Users*` through.
     """
-    if token in ("/", "/*", "/Users", "~", "$HOME"):
+    token = _normalize_leading(token)
+    if token in ("/", "/*", "/Users", "~", "$HOME", "${HOME}"):
         return True
-    if token.startswith(("/Users/", "~/", "$HOME/")):
+    if token.startswith(("/Users/", "~/", "$HOME/", "${HOME}/")):
         return True
-    return any(
+    if any(
         token == d or token == d + "/*" or token.startswith(d + "/")
         for d in _PROTECTED_SYSTEM_DIRS
-    )
+    ):
+        return True
+    return _glob_reaches_protected(token)
 
 
 def _is_rm_rf_protected(seg: list[str]) -> bool:
