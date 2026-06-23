@@ -52,6 +52,8 @@ jobs:
     env:
       RUFF_VERSION: 0.15.15
       RUFF_SHA256: 2c50f95a0f553731c87f8dc413465aa06059a0dc21dfe16786682db95ffeb9dc
+      TY_VERSION: 0.0.51
+      TY_SHA256: 8f923be612b5903b2b757b7c78ef575fe05f85ad67f59aadde2612bd7483b095
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -66,8 +68,20 @@ jobs:
           tar -xzf /tmp/ruff.tar.gz -C /tmp/ruff --strip-components=1
           sudo install /tmp/ruff/ruff /usr/local/bin/ruff
 
+      - name: Install ty
+        run: |
+          url="https://github.com/astral-sh/ty/releases/download/${TY_VERSION}/ty-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL "$url" -o /tmp/ty.tar.gz
+          echo "${TY_SHA256}  /tmp/ty.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/ty
+          tar -xzf /tmp/ty.tar.gz -C /tmp/ty --strip-components=1
+          sudo install /tmp/ty/ty /usr/local/bin/ty
+
       - name: ruff check
         run: ruff check .
 
       - name: ruff format
         run: ruff format --check .
+
+      - name: ty check
+        run: ty check .

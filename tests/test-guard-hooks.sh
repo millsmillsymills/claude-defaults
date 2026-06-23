@@ -159,6 +159,46 @@ expect_allow "$SAFETY" 'echo x | xargs rm -f' "safety xargs rm -f allowed"
 )" = "0" ] ||
   fail_msg "safety: non-string command did not fail open (expected rc=0)"
 
+# === #113/#114 bypass forms -- each was allowed (rc=0) before the hardening ===
+# Path-qualified / launcher-prefixed rm hides the command behind a token.
+expect_block "$SAFETY" '/bin/rm -rf /Users/x' "safety /bin/rm path-qualified"
+expect_block "$SAFETY" 'command rm -rf /Users/x' "safety command rm prefix"
+expect_block "$SAFETY" 'env rm -rf /Users/x' "safety env rm prefix"
+# Unspaced separators hide the destructive command after them.
+expect_block "$SAFETY" 'true;mkfs.ext4 /dev/sda' "safety unspaced ; mkfs"
+expect_block "$SAFETY" 'echo ok&&mkfs.ext4 /dev/sda' "safety unspaced && mkfs"
+# Narrow protected-path set: root glob and system dirs.
+expect_block "$SAFETY" "bash -c 'rm -rf /*'" "safety bash -c rm-rf root glob"
+expect_block "$SAFETY" 'rm -rf /etc' "safety rm-rf /etc"
+expect_block "$SAFETY" 'rm -rf /usr/*' "safety rm-rf /usr glob"
+# chmod recursive/mode normalization.
+expect_block "$SAFETY" 'chmod -R 0777 ~' "safety chmod -R 0777 octal"
+expect_block "$SAFETY" 'chmod --recursive 777 ~' "safety chmod --recursive long"
+# Force-push false positive: a branch path ending in a protected name is fine.
+expect_allow "$SAFETY" 'git push --force origin hotfix/prod' "safety force-push hotfix/prod ok"
+# Redirect target must not be read as an rm operand.
+expect_allow "$SAFETY" 'rm -rf /tmp/x > /dev/null' "safety rm-rf tmp with redirect"
+
+# === #114 bare push on a protected branch (resolved from the checked-out repo) ===
+# A throwaway repo gives a deterministic current branch independent of CWD.
+bare_repo=$(mktemp -d)
+git -C "$bare_repo" init -q -b main &&
+  git -C "$bare_repo" -c user.email=test@example.com -c user.name=test \
+    commit -q --allow-empty -m init
+bare_rc() { # branch cmd
+  git -C "$bare_repo" checkout -q "$1" 2>/dev/null
+  jq -nc --arg c "$2" '{tool_name:"Bash", tool_input:{command:$c}}' |
+    (cd "$bare_repo" && "$PWD_HOOK/block-push-main.py") >/dev/null 2>&1
+  echo $?
+}
+PWD_HOOK="$(pwd)/hooks"
+[ "$(bare_rc main 'git push')" = "2" ] ||
+  fail_msg "push: bare 'git push' on main was allowed (expected block)"
+git -C "$bare_repo" checkout -q -b feature
+[ "$(bare_rc feature 'git push')" = "0" ] ||
+  fail_msg "push: bare 'git push' on feature was blocked (expected allow)"
+rm -rf "$bare_repo"
+
 if [ "$fail" -eq 0 ]; then
   echo "test-guard-hooks: PASS"
 else
