@@ -225,28 +225,41 @@ def segments(tokens: list[str]):
         yield seg
 
 
+def _carries_command_string(token: str) -> bool:
+    """True if `token` makes a shell wrapper read its command from the *next*
+    token: a bare `-c`, or a combined short-flag bundle containing `c`
+    (`-lc`, `-cl`, `-ec`, `-xc`, `-ic`). The `c` need not be last -- `bash -cl`
+    is `-c -l` and still reads the command from the next token, so requiring it
+    at the end let `-cl`/`-cx` smuggle a payload past every check.
+
+    This predicate is security-relevant and shared by both the balanced
+    (`nested_payloads`) and the unbalanced-quote fallback (`fallback_payload`)
+    paths, so the two cannot drift: a form one path unwraps but the other misses
+    is exactly where a wrapped payload becomes a bypass. A `--long` option never
+    qualifies (`token[1] != "-"`).
+    """
+    return len(token) > 1 and token[0] == "-" and token[1] != "-" and "c" in token[1:]
+
+
 def nested_payloads(seg: list[str]):
-    """Yield nested command strings carried by `bash -c`/`eval`/... in `seg`."""
-    if not seg:
+    """Yield nested command strings carried by `bash -c`/`eval`/... in `seg`.
+
+    The wrapper is located after launcher/env prefixes (`command_start`), so
+    `env bash -c '...'`, `FOO=1 bash -c '...'`, and `timeout 5 bash -c '...'` are
+    unwrapped too -- keying on `seg[0]` let any such prefix hide the wrapper and
+    smuggle the payload past every check.
+    """
+    start = command_start(seg)
+    if start >= len(seg):
         return
-    cmd_base = base(seg[0])
+    cmd_base = base(seg[start])
     if cmd_base in _SHELL_WRAPPERS:
-        for i, token in enumerate(seg):
-            # `-c <cmd>`, or a combined short-flag bundle ending in `c`
-            # (`bash -lc '...'`, `-ec`, `-xc`, `-ic`), carries the command
-            # string in the next token. Matching only `-c` let those wrappers
-            # smuggle a payload past every check.
-            is_dash_c = token == "-c" or (
-                len(token) > 1
-                and token[0] == "-"
-                and token[1] != "-"
-                and token.endswith("c")
-            )
-            if is_dash_c and i + 1 < len(seg):
+        for i in range(start, len(seg)):
+            if _carries_command_string(seg[i]) and i + 1 < len(seg):
                 yield seg[i + 1]
                 break
     elif cmd_base == "eval":
-        payload = " ".join(seg[1:])
+        payload = " ".join(seg[start + 1 :])
         if payload:
             yield payload
 
@@ -255,24 +268,22 @@ def fallback_payload(seg: list[str]) -> str:
     """The wrapped command string a de-quoted `bash -c`/`eval` segment carries.
 
     The fallback has already split the payload's words apart (quotes are gone),
-    so the tail is rejoined into a command string the caller re-scans. Returns
-    "" when the segment wraps nothing.
+    so the tail is rejoined into a command string the caller re-scans. The
+    wrapper is located after launcher/env prefixes (`command_start`), matching
+    `nested_payloads`, so a prefixed wrapper cannot slip past this path either.
+    Returns "" when the segment wraps nothing.
     """
-    if not seg:
+    start = command_start(seg)
+    if start >= len(seg):
         return ""
-    cmd_base = base(seg[0])
+    cmd_base = base(seg[start])
     if cmd_base in _SHELL_WRAPPERS:
-        for i, token in enumerate(seg):
-            if token == "-c" or (
-                len(token) > 1
-                and token[0] == "-"
-                and token[1] != "-"
-                and token.endswith("c")
-            ):
+        for i in range(start, len(seg)):
+            if _carries_command_string(seg[i]):
                 return " ".join(seg[i + 1 :])
         return ""
     if cmd_base == "eval":
-        return " ".join(seg[1:])
+        return " ".join(seg[start + 1 :])
     return ""
 
 

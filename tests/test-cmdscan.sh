@@ -47,6 +47,12 @@ check(c.command_index(["ls"], "rm") == -1, "command_index non-match")
 check(list(c.nested_payloads(["bash", "-c", "rm -rf /"])) == ["rm -rf /"], "nested -c")
 check(list(c.nested_payloads(["sh", "-lc", "rm -rf /"])) == ["rm -rf /"], "nested -lc")
 check(list(c.nested_payloads(["eval", "rm", "-rf"])) == ["rm -rf"], "nested eval")
+# A wrapper behind a launcher/env prefix must still be unwrapped (the checks skip
+# the same prefixes via command_start, so the parser must agree).
+check(list(c.nested_payloads(["env", "bash", "-c", "rm -rf /"])) == ["rm -rf /"], "nested env-prefixed")
+check(list(c.nested_payloads(["FOO=1", "bash", "-lc", "rm -rf /"])) == ["rm -rf /"], "nested env-assign-prefixed")
+check(list(c.nested_payloads(["nohup", "bash", "-c", "x"])) == ["x"], "nested nohup-prefixed")
+check(list(c.nested_payloads(["timeout", "5", "bash", "-c", "x"])) == ["x"], "nested timeout-prefixed")
 
 # strip_redirects drops the operator and the target it consumes.
 check(c.strip_redirects(["rm", "-rf", "x", ">", "/dev/null"]) == ["rm", "-rf", "x"], "strip_redirects")
@@ -64,10 +70,28 @@ check(list(c.iter_segments("rm -rf x", depth=5, max_depth=5)) == [["rm", "-rf", 
 check(c.fallback_payload(["bash", "-c", "rm", "-rf", "/etc"]) == "rm -rf /etc", "fallback_payload bash -c")
 check(c.fallback_payload(["eval", "rm", "-rf"]) == "rm -rf", "fallback_payload eval")
 check(c.fallback_payload(["ls", "-la"]) == "", "fallback_payload non-wrapper")
+check(c.fallback_payload(["env", "bash", "-c", "rm", "-rf", "/etc"]) == "rm -rf /etc", "fallback_payload env-prefixed")
+check(c.fallback_payload(["FOO=1", "bash", "-c", "rm", "-rf", "/etc"]) == "rm -rf /etc", "fallback_payload env-assign-prefixed")
 
 # A wrapped payload with unbalanced quotes is re-entered by iter_segments' fallback.
 segs = list(c.iter_segments("bash -c 'rm -rf /etc"))
 check(["rm", "-rf", "/etc"] in segs, "fallback recurses into bash -c payload")
+
+# #142: nested_payloads (balanced) and fallback_payload (unbalanced-quote) share
+# one wrapper-flag predicate, so they must agree on which forms carry a command
+# string. A form unwrapped by one but missed by the other is where the fallback
+# path turns into a bypass. Drive the same forms through both.
+# `c` need not be last: `-cl` is `-c -l` and still carries the command.
+for flag in ("-c", "-lc", "-cl", "-ec", "-xc", "-cx", "-ic", "-lec"):
+  seg = ["bash", flag, "rm -rf /etc"]
+  check(list(c.nested_payloads(seg)) == ["rm -rf /etc"], f"nested unwraps {flag}")
+  check(c.fallback_payload(seg) == "rm -rf /etc", f"fallback unwraps {flag}")
+# A flag that does NOT carry a command (no trailing `c`, or a `--long`) must be
+# ignored by BOTH paths, never just one.
+for flag in ("-l", "-x", "-i", "--login", "--rcfile"):
+  seg = ["bash", flag, "rm -rf /etc"]
+  check(list(c.nested_payloads(seg)) == [], f"nested ignores {flag}")
+  check(c.fallback_payload(seg) == "", f"fallback ignores {flag}")
 
 # The fallback path must also fail closed past the depth bound, not silently drop
 # the inner command (the balanced path raises; the fallback must match).
