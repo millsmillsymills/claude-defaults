@@ -27,17 +27,54 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-_OPERATORS = {"&&", "||", ";", "|", "&", "\n"}
+_OPERATORS = {"&&", "||", ";", "|", "&", "\n", "(", ")"}
 _SHELL_WRAPPERS = {"bash", "sh", "zsh", "dash", "ksh"}
+# Launcher prefixes that delegate to the command that follows. Skipping them
+# stops `command rm`, `env rm`, `sudo rm` (etc.) from hiding the real command
+# behind a token the checks don't recognize.
+_RM_LAUNCHERS = {
+    "sudo",
+    "command",
+    "env",
+    "nohup",
+    "nice",
+    "stdbuf",
+    "time",
+    "ionice",
+    "setsid",
+}
+# Redirection operators consume the following token (their target), which is not
+# an argument of the command. Dropping the pair keeps a redirect target like
+# `> /var/log/x` from being mistaken for a destructive command's operand.
+_REDIRECTS = {">", ">>", "<", "<<", "<<<", "&>", ">&", "1>", "1>>", "2>", "2>>"}
 _MAX_DEPTH = 5
 
 _RE_ENV = re.compile(r"^[A-Za-z_]\w*=")
 _RE_DD_DISK = re.compile(r"^of=/dev/(?:disk|sd|nvme|rdisk)")
 _PROTECTED_BRANCHES = ("main", "master", "production", "prod")
-# A fork bomb anchored at the start of a (de-quoted) segment, so a literal
+# Top-level system directories an `rm -rf` (or `chmod -R 777`) must never touch.
+# Deliberately excludes the temp dirs (/tmp, /private, /dev) so legitimate
+# scratch deletes and `> /dev/null` redirects are not false-positives.
+_PROTECTED_SYSTEM_DIRS = (
+    "/etc",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/var",
+    "/opt",
+    "/lib",
+    "/lib64",
+    "/boot",
+    "/root",
+    "/System",
+    "/Library",
+    "/Applications",
+    "/home",
+)
+# A fork bomb anchored at the start of a command string, so a literal
 # `echo ":(){ :|:& };:"` -- where the pattern is an argument, not the command
 # being defined -- is not mistaken for the real thing.
-_RE_FORK_BOMB = re.compile(r"^:\s*\(\)\s*\{.*\|.*&.*\}", re.DOTALL)
+_RE_FORK_BOMB = re.compile(r"^\s*:\s*\(\)\s*\{.*\|.*&.*\}", re.DOTALL)
 
 
 def _base(token: str) -> str:
@@ -46,10 +83,35 @@ def _base(token: str) -> str:
 
 
 def _is_protected_target(token: str) -> bool:
-    """True if `token` names /, /Users, the home dir, or a child of them."""
-    if token in ("/", "/Users", "~", "$HOME"):
+    """True if `token` names root, a system dir, the home dir, or a child.
+
+    Covers the bare path, a root/system glob (`/*`, `/usr/*`), and children
+    (`/etc/cron.d`). The narrow original set (only `/`, `/Users`, `~`) let
+    `rm -rf /*`, `rm -rf /etc`, and friends through.
+    """
+    if token in ("/", "/*", "/Users", "~", "$HOME"):
         return True
-    return token.startswith(("/Users/", "~/", "$HOME/"))
+    if token.startswith(("/Users/", "~/", "$HOME/")):
+        return True
+    return any(
+        token == d or token == d + "/*" or token.startswith(d + "/")
+        for d in _PROTECTED_SYSTEM_DIRS
+    )
+
+
+def _strip_redirects(tokens: list[str]) -> list[str]:
+    """Drop redirection operators and the target token each one consumes."""
+    out: list[str] = []
+    skip_next = False
+    for token in tokens:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in _REDIRECTS:
+            skip_next = True
+            continue
+        out.append(token)
+    return out
 
 
 def _has_recursive_force(flags: list[str]) -> bool:
@@ -68,30 +130,41 @@ def _has_recursive_force(flags: list[str]) -> bool:
     return recursive and force
 
 
+def _rm_invocation(seg: list[str]) -> int:
+    """Index of the `rm` command in `seg`, or -1 if the segment isn't an `rm`.
+
+    Skips leading launcher prefixes (`sudo`, `command`, `env`, ...) and
+    `VAR=value` assignments, and matches on the command *basename* so
+    `/bin/rm`, `command rm`, and `env rm` are recognized -- the literal `rm`
+    match let every one of those forms through.
+    """
+    i = 0
+    while i < len(seg) and (seg[i] in _RM_LAUNCHERS or _RE_ENV.match(seg[i])):
+        i += 1
+    if i < len(seg) and _base(seg[i]) == "rm":
+        return i
+    return -1
+
+
 def _is_rm_rf_protected(seg: list[str]) -> bool:
     """`rm` with recursive+force flags targeting a protected path, same call.
 
-    Leading `sudo` and `VAR=value` assignments are skipped so they don't hide
-    the `rm`; the flags and the protected target must belong to this segment
-    (one invocation), so `cp -r /Users/x dst && rm -f junk` can't combine.
+    The flags and the protected target must belong to this segment (one
+    invocation), so `cp -r /Users/x dst && rm -f junk` can't combine.
     """
-    i = 0
-    while i < len(seg) and (seg[i] == "sudo" or _RE_ENV.match(seg[i])):
-        i += 1
-    if i >= len(seg) or seg[i] != "rm":
+    i = _rm_invocation(seg)
+    if i < 0:
         return False
-    rest = seg[i + 1 :]
+    rest = _strip_redirects(seg[i + 1 :])
     return _has_recursive_force(rest) and any(_is_protected_target(t) for t in rest)
 
 
 def _is_sudo_rm_rf(seg: list[str]) -> bool:
     """`sudo rm` with recursive+force flags against any target."""
-    return (
-        len(seg) >= 2
-        and seg[0] == "sudo"
-        and seg[1] == "rm"
-        and _has_recursive_force(seg[2:])
-    )
+    i = _rm_invocation(seg)
+    if i < 0 or "sudo" not in seg[:i]:
+        return False
+    return _has_recursive_force(_strip_redirects(seg[i + 1 :]))
 
 
 def _is_dd_to_disk(seg: list[str]) -> bool:
@@ -123,18 +196,57 @@ def _is_disk_partition(seg: list[str]) -> bool:
     return False
 
 
+def _is_chmod_recursive(token: str) -> bool:
+    """True for a recursive chmod flag (`--recursive` or a `-R` short bundle).
+
+    Lowercase `-r` is the symbolic *read* perm, not recursion, so only `R` in a
+    short bundle counts; `--recursive` was missed entirely before.
+    """
+    if token == "--recursive":
+        return True
+    return token.startswith("-") and not token.startswith("--") and "R" in token
+
+
+def _is_world_writable_mode(token: str) -> bool:
+    """True for an octal mode granting rwx to all (`777`, `0777`, `1777`, ...)."""
+    if not token or any(c not in "01234567" for c in token):
+        return False
+    return int(token, 8) & 0o777 == 0o777
+
+
 def _is_chmod_777(seg: list[str]) -> bool:
-    """`chmod -R 777` against / or the home dir."""
+    """Recursive, world-writable `chmod` against / or the home dir.
+
+    Normalizes the mode (`0777` == `777`) and treats `--recursive` like `-R` --
+    `chmod -R 0777 ~` and `chmod --recursive 777 ~` both slipped through before.
+    """
     if "chmod" not in [_base(t) for t in seg]:
         return False
-    recursive = any(t.startswith("-") and "R" in t for t in seg)
-    return recursive and "777" in seg and any(_is_protected_target(t) for t in seg)
+    rest = _strip_redirects(seg)
+    return (
+        any(_is_chmod_recursive(t) for t in rest)
+        and any(_is_world_writable_mode(t) for t in rest)
+        and any(_is_protected_target(t) for t in rest)
+    )
+
+
+def _push_dest(ref: str) -> str:
+    """The destination branch of a push refspec (the part after the last ':').
+
+    Strips a leading `+` (force refspec) and a `refs/heads/` prefix. Only the
+    final component is the branch, so `hotfix/prod` resolves to `hotfix/prod`,
+    not `prod` -- the old `[:/]` split flagged any path component as protected.
+    """
+    dest = ref.lstrip("+").rsplit(":", 1)[-1]
+    prefix = "refs/heads/"
+    if dest.startswith(prefix):
+        dest = dest[len(prefix) :]
+    return dest
 
 
 def _targets_protected_branch(ref: str) -> bool:
-    """True if a push refspec resolves to main/master/production/prod."""
-    parts = re.split(r"[:/]", ref.lstrip("+"))
-    return any(p in _PROTECTED_BRANCHES for p in parts)
+    """True if a push refspec's destination is main/master/production/prod."""
+    return _push_dest(ref) in _PROTECTED_BRANCHES
 
 
 def _is_force_push(seg: list[str]) -> bool:
@@ -159,10 +271,6 @@ def _is_force_push(seg: list[str]) -> bool:
     return any(_targets_protected_branch(b) for b in branches) or not branches
 
 
-def _is_fork_bomb(seg: list[str]) -> bool:
-    return bool(_RE_FORK_BOMB.match(" ".join(seg)))
-
-
 _CHECKS: list[tuple] = [
     (
         _is_rm_rf_protected,
@@ -179,7 +287,6 @@ _CHECKS: list[tuple] = [
     ),
     (_is_mkfs, "mkfs/wipefs against any device wipes data. Refusing."),
     (_is_disk_partition, "fdisk/parted write operation. Refusing."),
-    (_is_fork_bomb, "fork bomb pattern detected."),
     (
         _is_chmod_777,
         "chmod -R 777 against / or ~ is destructive (loses original perms). Refusing.",
@@ -189,6 +296,21 @@ _CHECKS: list[tuple] = [
         "force-push detected. Use a feature branch and PR, not a force push.",
     ),
 ]
+
+
+def _tokenize(cmd: str) -> list[str]:
+    """Tokenize a command, splitting unspaced operators (`true;mkfs ...`).
+
+    `shlex.split` only separates operators that are surrounded by whitespace, so
+    `true;mkfs.ext4 /dev/sda` parsed as a single `true;mkfs.ext4` token and
+    every check was skipped. `punctuation_chars=True` makes shlex emit `;`, `&`,
+    `|`, `(`, `)` as their own tokens regardless of spacing. `commenters=""`
+    mirrors `shlex.split` so a `#` mid-command is not treated as a comment.
+    """
+    lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    lex.commenters = ""
+    return list(lex)
 
 
 def _segments(tokens: list[str]):
@@ -256,8 +378,13 @@ def scan(cmd: str, depth: int = 0) -> str | None:
     """Return a block reason for `cmd`, recursing into wrapped payloads."""
     if depth > _MAX_DEPTH:
         return None
+    # Fork bombs are matched on the raw string: punctuation tokenization splits
+    # the `()`/`|`/`&` the pattern is built from across segments, so a
+    # per-segment check could never see the whole thing.
+    if _RE_FORK_BOMB.match(cmd):
+        return "fork bomb pattern detected."
     try:
-        tokens = shlex.split(cmd)
+        tokens = _tokenize(cmd)
     except ValueError:
         return _fallback_scan(cmd)
     for seg in _segments(tokens):
