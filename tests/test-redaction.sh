@@ -161,13 +161,15 @@ echo "$out" | jq -e '.a.b[0] | test("\\*\\*\\*")' >/dev/null ||
 
 # H11: redact-existing-logs.py re-redacts a captured log in place.
 tmplog=$(mktemp)
-printf '%s\n' '{"args":{"command":"export GH=ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}' >"$tmplog"
-printf '%s\n' 'this line is not json' >>"$tmplog"
-# #115: a token in a corrupt/non-JSON line must be redacted, not copied verbatim.
-printf '%s\n' 'traceback: token was ghp_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb here' >>"$tmplog"
-# #122: a truncated JSON fragment (fails json.loads) carries named secrets as
-# "key": "value" -- the quote between key and colon must not defeat redaction.
-printf '%s\n' '{"args": {"client_secret": "cs3cr3tleakval", "password": "pwleakval"' >>"$tmplog"
+{
+  printf '%s\n' '{"args":{"command":"export GH=ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'
+  printf '%s\n' 'this line is not json'
+  # #115: a token in a corrupt/non-JSON line must be redacted, not copied verbatim.
+  printf '%s\n' 'traceback: token was ghp_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb here'
+  # #122: a truncated JSON fragment (fails json.loads) carries named secrets as
+  # "key": "value" -- the quote between key and colon must not defeat redaction.
+  printf '%s\n' '{"args": {"client_secret": "cs3cr3tleakval", "password": "pwleakval"'
+} >"$tmplog"
 python3 scripts/redact-existing-logs.py "$tmplog" >/dev/null
 if grep -qF 'ghp_aaaa' "$tmplog"; then
   fail_msg "H11: secret not redacted in log file"
