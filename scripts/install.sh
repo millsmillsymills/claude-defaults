@@ -371,7 +371,9 @@ install_agents() {
     name=$(basename "$a")
     install_symlink "$a" "${CLAUDE_DIR}/agents/${name}" "agent: ${name}"
   done
-  [ "$found" = "0" ] && log "  (no agents in repo yet — empty scaffold)"
+  if [ "$found" = "0" ]; then
+    log "  (no agents in repo yet — empty scaffold)"
+  fi
 }
 
 install_skills() {
