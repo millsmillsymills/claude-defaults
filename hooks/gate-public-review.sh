@@ -11,38 +11,56 @@
 # status/diff/checks) is never gated.
 #
 # Visibility: the repo is resolved from an explicit --repo/-R flag, else from the
-# cwd remote, and `gh repo view --json visibility` is consulted once per repo per
-# session (cached). PRIVATE/INTERNAL repos are exempt. If visibility cannot be
+# cwd remote, and `gh repo view --json nameWithOwner,visibility` is consulted once
+# per repo identity per session (cached on nameWithOwner). PRIVATE/INTERNAL repos
+# are exempt. If visibility cannot be
 # confirmed the write is gated (fail closed) -- the write itself needs the same
 # network, so an offline session was going to fail regardless.
 set -uo pipefail
 
+# A security gate must fail closed: without jq it cannot parse the command and so
+# cannot tell a benign call from a public write -- refuse rather than allow blind.
+command -v jq >/dev/null || {
+  echo "BLOCKED: gate cannot parse input (jq unavailable)" >&2
+  exit 2
+}
+
 input=$(cat)
-cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""' 2>/dev/null || echo "")
-sid=$(printf '%s' "$input" | jq -r '.session_id // ""' 2>/dev/null || echo "")
+cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""')
+sid=$(printf '%s' "$input" | jq -r '.session_id // ""')
+# A parsed-but-empty command genuinely means "no Bash command to gate" -> allow.
 [ -n "$cmd" ] || exit 0
 [ -n "$sid" ] || sid="unknown"
 # session_id is untrusted input; sanitize before it reaches a filesystem path
 # (mirrors _sanitize in hooks/lib/log_tool_call.py and the other marker writers).
 sid="${sid//[^A-Za-z0-9_-]/_}"
 
-# Fast bail: nothing to do unless gh is invoked.
-printf '%s' "$cmd" | grep -Eq '(^|[^[:alnum:]])gh([[:space:]]|$)' || exit 0
+# Fast bail: nothing to do unless gh is invoked (gh or gh.exe).
+printf '%s' "$cmd" | grep -Eq '(^|[^[:alnum:]])gh(\.exe)?([[:space:]]|$)' || exit 0
 
 # Strip quoted strings before matching subcommands (mirrors warn-merge-after-pr.sh)
 # so a `gh issue create` inside a quoted literal does not trip the gate.
 scrubbed=$(printf '%s' "$cmd" | sed -E 's/"[^"]*"//g' | sed -E "s/'[^']*'//g")
 
-gh_sub_re='(^|[^[:alnum:]])gh([[:space:]]+[^;&|]*)?[[:space:]]'
+gh_sub_re='(^|[^[:alnum:]])gh(\.exe)?([[:space:]]+[^;&|]*)?[[:space:]]'
 
+# Accepted gap: user-defined gh aliases (e.g. `gh ic` for `issue create`) are not
+# resolved, so an aliased write slips through. Resolving aliases means shelling out
+# to `gh alias list`, which the gate deliberately avoids on the hot path.
 is_write() {
   printf '%s' "$scrubbed" | grep -Eq "${gh_sub_re}issue[[:space:]]+(create|edit|comment|close|reopen|delete|lock|unlock|pin|unpin|transfer|develop)([[:space:]]|$)" && return 0
   printf '%s' "$scrubbed" | grep -Eq "${gh_sub_re}pr[[:space:]]+(create|edit|comment|close|reopen|merge|ready|review)([[:space:]]|$)" && return 0
-  if printf '%s' "$scrubbed" | grep -Eq "${gh_sub_re}api([[:space:]]|$)" &&
-    printf '%s' "$scrubbed" | grep -Eq -- '(-X|--method)[[:space:]=]+(POST|PATCH|PUT|DELETE)' &&
-    printf '%s' "$scrubbed" | grep -Eq '/(issues|pulls)'; then
-    return 0
-  fi
+  printf '%s' "$scrubbed" | grep -Eq "${gh_sub_re}api([[:space:]]|$)" || return 1
+  # graphql mutations create/comment/close without a path or method we'd otherwise
+  # match. The payload lives inside quotes (stripped from $scrubbed), so match the
+  # mutation keyword against the original $cmd.
+  printf '%s' "$scrubbed" | grep -Eq "${gh_sub_re}api[[:space:]]+graphql([[:space:]]|$)" &&
+    printf '%s' "$cmd" | grep -Eqi 'mutation' && return 0
+  # gh api writes to issues/pulls: an explicit mutating method (-XPOST or -X POST),
+  # or an implied POST/PATCH via a field flag (-f/-F/--field/--input/--raw-field).
+  printf '%s' "$scrubbed" | grep -Eq '/(issues|pulls)' || return 1
+  printf '%s' "$scrubbed" | grep -Eq -- '(-X[[:space:]]*|--method[[:space:]=]+)(POST|PATCH|PUT|DELETE)' && return 0
+  printf '%s' "$scrubbed" | grep -Eq -- '(^|[[:space:]])(-f|-F|--field|--input|--raw-field)([[:space:]=]|$)' && return 0
   return 1
 }
 is_write || exit 0
@@ -60,24 +78,36 @@ repo=$(printf '%s' "$cmd" | grep -Eo -- '(--repo|-R)[[:space:]=]+[^[:space:]]+' 
 repo="${repo//\"/}"
 repo="${repo//\'/}"
 
-repo_key="${repo:-__cwd__}"
-repo_key="${repo_key//[^A-Za-z0-9_.-]/_}"
-visfile="${state_dir}/repovis-${sid}-${repo_key}"
-
-if [ -s "$visfile" ]; then
-  visibility=$(cat "$visfile" 2>/dev/null || echo "")
+# Resolve repo identity and visibility in one gh call: "<nameWithOwner>\t<vis>".
+# A flagless write resolves identity from the cwd remote. The cache is keyed on
+# that identity (not a shared "__cwd__" slot), so cd-ing from a private to a public
+# repo can't reuse a stale PRIVATE verdict.
+if [ -n "$repo" ]; then
+  resolved=$(gh repo view "$repo" --json nameWithOwner,visibility \
+    -q '"\(.nameWithOwner)\t\(.visibility)"' 2>/dev/null || true)
 else
-  if [ -n "$repo" ]; then
-    visibility=$(gh repo view "$repo" --json visibility -q .visibility 2>/dev/null || echo "")
-  else
-    visibility=$(gh repo view --json visibility -q .visibility 2>/dev/null || echo "")
+  resolved=$(gh repo view --json nameWithOwner,visibility \
+    -q '"\(.nameWithOwner)\t\(.visibility)"' 2>/dev/null || true)
+fi
+name="${resolved%%$'\t'*}"
+visibility=""
+[ -n "$resolved" ] && [ "$resolved" != "$name" ] && visibility="${resolved#*$'\t'}"
+
+# Key on the resolved identity; an explicit flag is the identity when resolution
+# failed (offline). Without either there is nothing stable to cache against.
+key="${name:-$repo}"
+if [ -n "$key" ]; then
+  key="${key//[^A-Za-z0-9_.-]/_}"
+  visfile="${state_dir}/repovis-${sid}-${key}"
+  if [ -n "$visibility" ]; then
+    printf '%s' "$visibility" >"$visfile" 2>/dev/null || true
+  elif [ -s "$visfile" ]; then
+    visibility=$(cat "$visfile" 2>/dev/null || echo "")
   fi
-  # Cache successful resolutions only; an unresolved repo retries next time.
-  [ -n "$visibility" ] && printf '%s' "$visibility" >"$visfile" 2>/dev/null || true
 fi
 
 case "$visibility" in
-  PRIVATE | INTERNAL) exit 0 ;; # not world-visible -> exempt
+PRIVATE | INTERNAL) exit 0 ;; # not world-visible -> exempt
 esac
 
 std="${state_dir}/review-standard-${sid}"

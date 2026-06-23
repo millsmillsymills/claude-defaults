@@ -17,14 +17,22 @@ TMPHOME="$(mktemp -d)"
 BIN="$(mktemp -d)"
 trap 'rm -rf "$TMPHOME" "$BIN"' EXIT
 
-# Fake gh: for `gh repo view ... --json visibility`, print $FAKE_VISIBILITY
-# (empty simulates an unresolved/offline repo). Everything else is a no-op.
+# Fake gh: for `gh repo view [<owner/repo>] --json nameWithOwner,visibility`,
+# print "<nameWithOwner>\t<FAKE_VISIBILITY>". nameWithOwner (resolved from the
+# local remote, so it survives offline) comes from the explicit positional repo
+# arg if given, else $FAKE_REPO (the cwd identity). An empty FAKE_VISIBILITY
+# simulates an offline visibility lookup: identity resolves, visibility does not.
+# Everything else is a no-op.
 cat >"$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
-case "$*" in
-  *"repo view"*) printf '%s' "${FAKE_VISIBILITY:-}" ;;
-  *) : ;;
-esac
+if [ "${1:-}" = "repo" ] && [ "${2:-}" = "view" ]; then
+  name="${FAKE_REPO:-cwd/repo}"
+  case "${3:-}" in
+    --* | "") : ;;
+    *) name="$3" ;;
+  esac
+  printf '%s\t%s' "$name" "${FAKE_VISIBILITY:-}"
+fi
 EOF
 chmod +x "$BIN/gh"
 
@@ -75,10 +83,11 @@ run_mark 'code-reviewer' '../evil'
 G="hooks/gate-public-review.sh"
 G_RC=0
 _g_out="$(mktemp "$TMPHOME/g_out.XXXXXX")"
-run_gate() { # cmd sid visibility
+run_gate() { # cmd sid visibility [fake_repo]
   jq -nc --arg c "$1" --arg s "$2" \
     '{tool_name:"Bash",tool_input:{command:$c},session_id:$s}' |
-    HOME="$TMPHOME" PATH="$BIN:$PATH" FAKE_VISIBILITY="$3" bash "$G" >"$_g_out" 2>&1
+    HOME="$TMPHOME" PATH="$BIN:$PATH" FAKE_VISIBILITY="$3" FAKE_REPO="${4:-cwd/repo}" \
+      bash "$G" >"$_g_out" 2>&1
   G_RC=$?
 }
 
@@ -132,17 +141,56 @@ run_gate 'gh api -X POST /repos/o/r/issues -f title=x' G10 PUBLIC
 run_gate 'gh api /repos/o/r/issues' G11 PUBLIC
 [ "$G_RC" = 0 ] || fail_msg "G: gh api GET to /issues should not be gated"
 
+# gh api with a field flag but no -X implies a POST -> write -> blocked.
+run_gate 'gh api /repos/o/r/issues -f title=x' G11b PUBLIC
+[ "$G_RC" = 2 ] || fail_msg "G: gh api -f to /issues (implied POST) should block"
+
+# gh api with -X glued to the method (-XPOST) -> write -> blocked.
+run_gate 'gh api -XPOST /repos/o/r/issues -f title=x' G11c PUBLIC
+[ "$G_RC" = 2 ] || fail_msg "G: gh api -XPOST (glued) to /issues should block"
+
+# gh api graphql mutation payload -> write -> blocked.
+run_gate "gh api graphql -f query='mutation{addComment(input:{}){clientMutationId}}'" G11d PUBLIC
+[ "$G_RC" = 2 ] || fail_msg "G: gh api graphql mutation should block"
+
+# gh api graphql read query (no mutation) -> not gated.
+run_gate "gh api graphql -f query='query{repository(owner:\"o\"){id}}'" G11e PUBLIC
+[ "$G_RC" = 0 ] || fail_msg "G: gh api graphql read query should not be gated"
+
+# gh.exe is matched the same as gh.
+run_gate 'gh.exe issue create -t x -b y' G11f PUBLIC
+[ "$G_RC" = 2 ] || fail_msg "G: gh.exe write should be gated"
+
 # Unresolved visibility (offline) fails closed and says so.
 run_gate 'gh issue create -t x -b y' G12 ''
 [ "$G_RC" = 2 ] || fail_msg "G: unresolved visibility should fail closed (exit 2)"
 grep -q 'could not be confirmed' "$_g_out" || fail_msg "G: unresolved-visibility message should note the failure"
 
-# Visibility is cached per session: a PRIVATE resolution sticks even if a later
-# call would see PUBLIC.
-run_gate 'gh issue comment 1 -b hi' G13 PRIVATE
+# jq unavailable -> gate fails closed (cannot parse input -> exit 2).
+JQLESS="$(mktemp -d)"
+for tool in bash cat sed grep find printf chmod head tr; do
+  ln -s "$(command -v "$tool")" "$JQLESS/$tool" 2>/dev/null || true
+done
+jq -nc '{tool_name:"Bash",tool_input:{command:"gh issue create -t x"},session_id:"G14"}' |
+  HOME="$TMPHOME" PATH="$JQLESS" bash "$G" >"$_g_out" 2>&1
+G_RC=$?
+rm -rf "$JQLESS"
+[ "$G_RC" = 2 ] || fail_msg "G: missing jq should fail closed (exit 2)"
+grep -q 'jq unavailable' "$_g_out" || fail_msg "G: jq-missing message should name jq"
+
+# Cache helps only when resolution fails: a cached PRIVATE verdict for an identity
+# is reused on a later offline call for the SAME identity.
+run_gate 'gh issue comment 1 -b hi' G13 PRIVATE priv/repo
 [ "$G_RC" = 0 ] || fail_msg "G: first private resolution should allow"
-run_gate 'gh issue create -t x -b y' G13 PUBLIC
-[ "$G_RC" = 0 ] || fail_msg "G: cached private visibility should keep exemption"
+run_gate 'gh issue create -t x -b y' G13 '' priv/repo
+[ "$G_RC" = 0 ] || fail_msg "G: cached private identity should stay exempt when offline"
+
+# #7 fix: a PRIVATE verdict must NOT leak to a different (public) repo identity.
+# cd-ing from a private to a public repo re-resolves and blocks.
+run_gate 'gh issue comment 1 -b hi' G15 PRIVATE priv/repo
+[ "$G_RC" = 0 ] || fail_msg "G: private repo identity should allow"
+run_gate 'gh issue create -t x -b y' G15 PUBLIC pub/repo
+[ "$G_RC" = 2 ] || fail_msg "G: stale private cache must not exempt a different public repo"
 
 echo "public-review-gate: checks ran"
 [ "$fail" -eq 0 ] || {
