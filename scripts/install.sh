@@ -267,6 +267,26 @@ install_mcp() {
     return
   fi
 
+  # A symlink at $target: a later `jq ... >"$target"` would follow the link and
+  # overwrite its target (a real file elsewhere) instead of replacing the link.
+  # Back up where it pointed, record the link so uninstall can explain it, then
+  # remove the link so the write lands on a fresh regular file here. (`-f`/`-L`
+  # together also reach a dangling link, which would otherwise be written
+  # through to create a file at the dead destination.)
+  if [ -L "$target" ]; then
+    local link_dest
+    link_dest=$(readlink "$target")
+    if [ -f "$target" ]; then
+      ensure_backup_dir
+      cp -pL "$target" "${BACKUP_DIR}/mcp.json"
+      log "backed up symlink target: ${link_dest} -> ${BACKUP_DIR}/mcp.json"
+      manifest_add "mcpbackup ${BACKUP_DIR}/mcp.json"
+    fi
+    manifest_add "mcpsymlink ${target} ${link_dest}"
+    warn "replaced symlink ${target} (was -> ${link_dest}) with a real file"
+    rm -f "$target"
+  fi
+
   # We only reach here with the target absent or --force set. Back up an
   # existing file before overwriting (it lives in $HOME, outside the
   # ~/.claude backup snapshot, so record the backup path in the manifest);
