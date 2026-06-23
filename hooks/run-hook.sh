@@ -17,7 +17,7 @@ mkdir -p "${CLAUDE_DIR}/logs" "${CLAUDE_DIR}/hooks/lib" 2>/dev/null || true
 # chmod-777/force-push too. A silent skip of one is the worst failure mode, so
 # any skip below is logged durably and warned loudly rather than failing open
 # quietly.
-SECURITY_HOOKS=" safety-block.py block-rm-rf.sh block-push-main.sh "
+SECURITY_HOOKS=" safety-block.py block-rm-rf.py block-push-main.py "
 
 # Record a security hook being skipped to a durable log AND stderr, so a
 # never-ran guard is visible after the fact instead of silently allowing.

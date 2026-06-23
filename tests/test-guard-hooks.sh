@@ -29,8 +29,8 @@ expect_allow() { # hook cmd label
   [ "$(hook_rc "$1" "$2")" = "0" ] || fail_msg "$3: '$2' was blocked (expected allow)"
 }
 
-# === H2: block-rm-rf.sh -- recursive+force in any flag arrangement ===
-RMRF="hooks/block-rm-rf.sh"
+# === H2: block-rm-rf.py -- recursive+force in any flag arrangement ===
+RMRF="hooks/block-rm-rf.py"
 expect_block "$RMRF" 'rm -rf /tmp/foo' "rm-rf combined"
 expect_block "$RMRF" 'rm -fr /tmp/foo' "rm-rf reversed flags"
 expect_block "$RMRF" 'rm -r -f /tmp/foo' "rm-rf split flags"
@@ -46,9 +46,12 @@ expect_allow "$RMRF" 'ls -R dir; rm -f junk' "rm-rf ls -R then rm -f"
 expect_allow "$RMRF" 'grep -r foo . && rm -f out' "rm-rf grep -r then rm -f"
 expect_allow "$RMRF" 'rsync -r a b && rm -f c' "rm-rf rsync -r then rm -f"
 expect_block "$RMRF" 'cp -r a b && rm -rf /tmp/x' "rm-rf real rm-rf after cp -r"
+# Wrapper bypass: a payload inside bash -c must not slip past the guard.
+expect_block "$RMRF" "bash -c 'rm -rf ./build'" "rm-rf wrapped in bash -c"
+expect_block "$RMRF" "true;rm -rf ./build" "rm-rf after unspaced separator"
 
-# === H1: block-push-main.sh -- remotes with digits/dots and refspec forms ===
-PUSH="hooks/block-push-main.sh"
+# === H1: block-push-main.py -- remotes with digits/dots and refspec forms ===
+PUSH="hooks/block-push-main.py"
 expect_block "$PUSH" 'git push origin main' "push plain"
 expect_block "$PUSH" 'git push origin master' "push master"
 expect_block "$PUSH" 'git push origin2 main' "push numbered remote"
@@ -67,6 +70,8 @@ expect_allow "$PUSH" 'git push origin feature' "push feature branch"
 expect_allow "$PUSH" 'git push origin main:feature' "push main into feature"
 expect_allow "$PUSH" 'git push -u origin feature' "push -u feature branch"
 expect_allow "$PUSH" 'git status' "push benign status"
+# Wrapper bypass: a push to main inside bash -c must not slip past the guard.
+expect_block "$PUSH" "bash -c 'git push origin main'" "push main wrapped in bash -c"
 
 # === H2: safety-block.py -- destructive commands, incl. wrapped payloads ===
 SAFETY="hooks/safety-block.py"
