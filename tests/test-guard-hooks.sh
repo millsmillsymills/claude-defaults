@@ -119,6 +119,39 @@ expect_block "$SAFETY" $'echo hi\ndd if=/dev/zero of=/dev/disk0' "safety dd afte
 expect_block "$SAFETY" 'git push origin +main' "safety +refspec force main"
 expect_block "$SAFETY" 'git push origin +HEAD:master' "safety +refspec force master"
 expect_allow "$SAFETY" 'git push origin +myfeature' "safety +refspec feature ok"
+# #126: leading-path normalization -- /./, //, and /.// must not slip a
+# protected target past the literal-prefix check.
+expect_block "$SAFETY" 'rm -rf /./etc' "safety /./etc normalized"
+expect_block "$SAFETY" 'rm -rf //etc' "safety //etc normalized"
+expect_block "$SAFETY" 'rm -rf /.//etc' "safety /.//etc normalized"
+expect_block "$SAFETY" 'rm -rf /etc/../usr' "safety /etc/../usr normalized"
+# #126: globs whose literal prefix can expand to a protected root.
+expect_block "$SAFETY" 'rm -rf /Users*' "safety /Users* glob"
+expect_block "$SAFETY" 'rm -rf /Us*' "safety /Us* glob"
+expect_block "$SAFETY" 'rm -rf /et*' "safety /et* glob"
+expect_block "$SAFETY" 'rm -rf ~*' "safety ~* glob"
+# #126: a glob that cannot reach a protected root must stay allowed.
+expect_allow "$SAFETY" 'rm -rf /usr-mirror*' "safety /usr-mirror* allowed"
+expect_allow "$SAFETY" 'rm -rf ./build/*' "safety ./build/* allowed"
+expect_allow "$SAFETY" 'rm -rf /tmp/*' "safety /tmp/* allowed"
+# #126: ${HOME} brace form alongside the $HOME form. The literal ${HOME} is the
+# input under test -- it must reach the hook unexpanded, so single quotes are
+# intentional here.
+# shellcheck disable=SC2016
+expect_block "$SAFETY" 'rm -rf ${HOME}/projects' "safety \${HOME} brace form"
+# #126: arg-taking launchers (timeout duration, timeout -k/-s, doas) must not
+# hide the wrapped rm.
+expect_block "$SAFETY" 'timeout 5 rm -rf /etc' "safety timeout rm-rf"
+expect_block "$SAFETY" 'timeout -k 5 5 rm -rf /etc' "safety timeout -k rm-rf"
+expect_block "$SAFETY" 'timeout -s TERM -k 5 5 rm -rf /etc' "safety timeout -s -k rm-rf"
+expect_block "$SAFETY" 'timeout --signal=TERM 5 rm -rf /etc' "safety timeout --signal= rm-rf"
+expect_block "$SAFETY" 'doas rm -rf /etc' "safety doas rm-rf"
+expect_block "$SAFETY" 'nice -n 5 rm -rf /etc' "safety nice -n rm-rf"
+# #126: launcher false positives -- a non-rm wrapped command stays allowed.
+expect_allow "$SAFETY" 'timeout 5 echo hi' "safety timeout echo allowed"
+expect_allow "$SAFETY" 'nice -n 5 make' "safety nice make allowed"
+expect_allow "$SAFETY" 'echo x | xargs rm -f' "safety xargs rm -f allowed"
+
 # #52: a non-string command must fail open (exit 0), never crash with rc=1.
 [ "$(
   jq -nc '{tool_name:"Bash", tool_input:{command:123}}' | "$SAFETY" >/dev/null 2>&1
