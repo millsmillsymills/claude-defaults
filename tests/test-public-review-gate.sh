@@ -27,11 +27,21 @@ cat >"$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 if [ "${1:-}" = "repo" ] && [ "${2:-}" = "view" ]; then
   name="${FAKE_REPO:-cwd/repo}"
+  vis="${FAKE_VISIBILITY:-}"
   case "${3:-}" in
     --* | "") : ;;
-    *) name="$3" ;;
+    *)
+      # An explicit repo identity (e.g. the owner/repo parsed from a `gh api`
+      # path) overrides the cwd identity; derive its visibility from the name so
+      # a cross-repo write can be told apart from the cwd repo's visibility.
+      name="$3"
+      case "$name" in
+        *pub*) vis=PUBLIC ;;
+        *priv*) vis=PRIVATE ;;
+      esac
+      ;;
   esac
-  printf '%s\t%s' "$name" "${FAKE_VISIBILITY:-}"
+  printf '%s\t%s' "$name" "$vis"
 fi
 EOF
 chmod +x "$BIN/gh"
@@ -184,6 +194,17 @@ run_gate 'gh issue comment 1 -b hi' G13 PRIVATE priv/repo
 [ "$G_RC" = 0 ] || fail_msg "G: first private resolution should allow"
 run_gate 'gh issue create -t x -b y' G13 '' priv/repo
 [ "$G_RC" = 0 ] || fail_msg "G: cached private identity should stay exempt when offline"
+
+# #128/C1 fix: `gh api` carries its target repo in the URL path, not a --repo
+# flag. A write to a PUBLIC repo issued from inside a PRIVATE checkout must
+# resolve visibility from the api path (PUBLIC -> block), not from the private
+# cwd (which would fail open and let the write out unreviewed).
+run_gate 'gh api -X POST /repos/pubowner/pubrepo/issues -f title=x' C1 PRIVATE priv/repo
+[ "$G_RC" = 2 ] || fail_msg "C1: gh api write to a public path repo from a private cwd must block"
+# Symmetric: when the api path names a PRIVATE repo, the write stays exempt even
+# though the cwd repo is public -- proving the path repo, not cwd, is resolved.
+run_gate 'gh api -X POST /repos/privowner/privrepo/issues -f title=x' C1b PUBLIC pub/repo
+[ "$G_RC" = 0 ] || fail_msg "C1b: gh api write to a private path repo should be exempt"
 
 # #7 fix: a PRIVATE verdict must NOT leak to a different (public) repo identity.
 # cd-ing from a private to a public repo re-resolves and blocks.

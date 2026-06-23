@@ -78,6 +78,19 @@ repo=$(printf '%s' "$cmd" | grep -Eo -- '(--repo|-R)[[:space:]=]+[^[:space:]]+' 
 repo="${repo//\"/}"
 repo="${repo//\'/}"
 
+# `gh api` carries the target repo in the URL path (`/repos/<owner>/<repo>/...`),
+# not a --repo flag. Without parsing it, a `gh api` write to a PUBLIC repo issued
+# from inside a PRIVATE checkout would resolve visibility from the cwd remote and
+# be exempted -- a fail-open straight past the gate. An explicit --repo flag still
+# wins; otherwise pull owner/repo from the api path so the visibility check
+# targets the repo actually being written. (Read $scrubbed so a repo path inside
+# a quoted argument is not mistaken for the target.)
+if [ -z "$repo" ]; then
+  repo=$(printf '%s' "$scrubbed" |
+    grep -Eo '(^|[[:space:]=/])repos/[^/[:space:]]+/[^/[:space:]]+' | head -1 |
+    sed -E 's#.*repos/##')
+fi
+
 # Resolve repo identity and visibility in one gh call: "<nameWithOwner>\t<vis>".
 # A flagless write resolves identity from the cwd remote. The cache is keyed on
 # that identity (not a shared "__cwd__" slot), so cd-ing from a private to a public
