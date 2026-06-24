@@ -347,13 +347,14 @@ def _is_octal_world_writable(mode: str) -> bool:
 
 
 # A symbolic chmod clause: a `who` (`[ugoa]*`) then one or more op groups, e.g.
-# `o+w`, `a=rwx`, `=rwx`, `a-x+w` (a single clause can chain ops). Each op's
-# argument is either a literal perm set (`[rwxXst]*`) or a reference-letter set
-# (`[ugo]+`, the reference-copy form `o=u`/`o=ug` -- copy owner/group bits to
-# other); the reference is matched first so `=u` is read as a copy, not an empty
-# perm set. Comma joins separate clauses, split before this is applied.
-_RE_SYMBOLIC_CLAUSE = re.compile(r"^([ugoa]*)((?:[-+=](?:[ugo]+|[rwxXst]*))+)$")
-_RE_SYMBOLIC_OP = re.compile(r"([-+=])([ugo]+|[rwxXst]*)")
+# `o+w`, `a=rwx`, `=rwx`, `a-x+w` (a single clause can chain ops). An op's
+# argument is reference letters (`o=u`/`o=ug` -- copy owner/group bits), literal
+# perms (`rwxXst`), or a BSD/macOS mix of both (`o=uw`); the charset is unioned so
+# a mixed arg matches in one alternative rather than failing the match entirely
+# and slipping a world-write bit through. Comma joins separate clauses, split
+# before this is applied.
+_RE_SYMBOLIC_CLAUSE = re.compile(r"^([ugoa]*)((?:[-+=][ugorwxXst]*)+)$")
+_RE_SYMBOLIC_OP = re.compile(r"([-+=])([ugorwxXst]*)")
 # chmod's own short flags, stripped off a bundled token to reach the mode.
 _CHMOD_FLAG_LETTERS = "RvfchHLP"
 
