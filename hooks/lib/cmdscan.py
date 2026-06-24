@@ -81,6 +81,15 @@ _LAUNCHER_VALUE_FLAGS = {
         "--eof",
     },
 }
+# The single-letter short flags from each launcher's value-flag set. A bundled
+# short flag (`-iu`) takes a separate value only when its *last* letter is one of
+# these (`-iu` is `-i -u`, so `-u` binds the next token); a value letter earlier
+# in the bundle binds the bundle's own tail (`-ui` is `-u i`) and takes no next
+# token.
+_LAUNCHER_VALUE_LETTERS = {
+    launcher: {flag[1] for flag in flags if len(flag) == 2 and flag[0] == "-"}
+    for launcher, flags in _LAUNCHER_VALUE_FLAGS.items()
+}
 # Arg-launchers that take a bare positional (not a flag) before the command --
 # `timeout`'s DURATION. Consumed after the option flags, but only when it looks
 # like a duration: `timeout rm -rf /etc` (no duration) must not skip `rm` as if
@@ -107,12 +116,17 @@ def _skip_launcher_args(seg: list[str], i: int, launcher: str) -> int:
     """
     n = len(seg)
     value_flags = _LAUNCHER_VALUE_FLAGS.get(launcher, set())
+    value_letters = _LAUNCHER_VALUE_LETTERS.get(launcher, set())
     while i < n and seg[i].startswith("-"):
         flag = seg[i]
         i += 1
         if flag == "--":
             break
-        if "=" not in flag and flag in value_flags and i < n:
+        is_bundle = len(flag) > 2 and flag[1] != "-"
+        takes_value = (flag in value_flags and "=" not in flag) or (
+            is_bundle and flag[-1] in value_letters
+        )
+        if takes_value and i < n:
             i += 1
     for _ in range(_LAUNCHER_POSITIONALS.get(launcher, 0)):
         if i < n and not seg[i].startswith("-") and _RE_DURATION.match(seg[i]):

@@ -63,6 +63,14 @@ check(list(c.nested_payloads(["env", "-i", "bash", "-c", "rm -rf /"])) == ["rm -
 check(list(c.nested_payloads(["env", "-u", "X", "bash", "-c", "y"])) == ["y"], "nested env -u prefixed")
 check(list(c.nested_payloads(["env", "--", "bash", "-c", "z"])) == ["z"], "nested env -- prefixed")
 check(c.fallback_payload(["env", "-i", "bash", "-c", "rm", "-rf", "/etc"]) == "rm -rf /etc", "fallback env -i prefixed")
+# #147 residual: a combined short-flag bundle whose LAST letter is a value flag
+# (`-iu` == `-i -u`) consumes the NEXT token as that flag's value, so the wrapper
+# after it must still be reached. Treating the bundle as a single non-value flag
+# stopped the scan one token early and hid the payload.
+check(c.command_start(["env", "-iu", "VAR", "bash", "-c", "x"]) == 3, "command_start env -iu VAR bundle")
+check(c.command_start(["env", "-ui", "bash", "-c", "x"]) == 2, "command_start env -ui attached value")
+check(list(c.nested_payloads(["env", "-iu", "VAR", "bash", "-c", "rm -rf /etc"])) == ["rm -rf /etc"], "nested env -iu bundle")
+check(c.fallback_payload(["env", "-iu", "VAR", "bash", "-c", "rm", "-rf", "/etc"]) == "rm -rf /etc", "fallback env -iu bundle")
 
 # strip_redirects drops the operator and the target it consumes.
 check(c.strip_redirects(["rm", "-rf", "x", ">", "/dev/null"]) == ["rm", "-rf", "x"], "strip_redirects")
