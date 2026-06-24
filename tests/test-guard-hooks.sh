@@ -219,6 +219,17 @@ expect_block "$SAFETY" 'chmod -R o=gu /etc' "safety chmod o=gu multi-ref to othe
 expect_allow "$SAFETY" 'chmod -R u=g /etc' "safety chmod u=g owner from group"
 expect_allow "$SAFETY" 'chmod -R g=u /etc' "safety chmod g=u group from owner"
 expect_allow "$SAFETY" 'chmod -R o=o /etc' "safety chmod o=o self ref no grant"
+# #148: BSD/macOS chmod accepts an op arg mixing reference and literal-perm
+# letters (`o=uw`); the all-ref-or-all-perm regex matched neither alt and let
+# the world-write bit through. Mixed forms granting other/all write must block.
+expect_block "$SAFETY" 'chmod -R o=uw /etc' "safety chmod o=uw mixed ref+perm"
+expect_block "$SAFETY" 'chmod -R o=gw /etc' "safety chmod o=gw mixed ref+perm"
+expect_block "$SAFETY" 'chmod -R o=wu /etc' "safety chmod o=wu mixed perm+ref"
+expect_block "$SAFETY" 'chmod -R a=uw /etc' "safety chmod a=uw mixed ref+perm all"
+expect_block "$SAFETY" 'chmod -R o+uw /etc' "safety chmod o+uw mixed add"
+# Mixed forms that do not reach other/all, or grant no write, stay allowed.
+expect_allow "$SAFETY" 'chmod -R u=gx /etc' "safety chmod u=gx owner mixed no world"
+expect_allow "$SAFETY" 'chmod -R o=rx /etc' "safety chmod o=rx other read/exec only"
 # #137: nested braces whose only literal prefix is `/` still resolve to a root.
 # shellcheck disable=SC2016
 expect_block "$SAFETY" 'rm -rf /{etc,x{a..b}}' "safety nested brace /{etc,x{a..b}}"
