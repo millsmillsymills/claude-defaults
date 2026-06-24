@@ -53,6 +53,16 @@ check(list(c.nested_payloads(["env", "bash", "-c", "rm -rf /"])) == ["rm -rf /"]
 check(list(c.nested_payloads(["FOO=1", "bash", "-lc", "rm -rf /"])) == ["rm -rf /"], "nested env-assign-prefixed")
 check(list(c.nested_payloads(["nohup", "bash", "-c", "x"])) == ["x"], "nested nohup-prefixed")
 check(list(c.nested_payloads(["timeout", "5", "bash", "-c", "x"])) == ["x"], "nested timeout-prefixed")
+# #147: env's own option flags (-i, -u NAME, --) precede the command, so a
+# bare-skip stops at the flag and hides the wrapper. They must be skipped too.
+check(c.command_start(["env", "-i", "rm"]) == 2, "command_start env -i")
+check(c.command_start(["env", "-u", "VAR", "rm"]) == 3, "command_start env -u NAME")
+check(c.command_start(["env", "--", "rm"]) == 2, "command_start env -- terminator")
+check(c.command_start(["env", "-i", "FOO=1", "rm"]) == 3, "command_start env -i then assign")
+check(list(c.nested_payloads(["env", "-i", "bash", "-c", "rm -rf /"])) == ["rm -rf /"], "nested env -i prefixed")
+check(list(c.nested_payloads(["env", "-u", "X", "bash", "-c", "y"])) == ["y"], "nested env -u prefixed")
+check(list(c.nested_payloads(["env", "--", "bash", "-c", "z"])) == ["z"], "nested env -- prefixed")
+check(c.fallback_payload(["env", "-i", "bash", "-c", "rm", "-rf", "/etc"]) == "rm -rf /etc", "fallback env -i prefixed")
 
 # strip_redirects drops the operator and the target it consumes.
 check(c.strip_redirects(["rm", "-rf", "x", ">", "/dev/null"]) == ["rm", "-rf", "x"], "strip_redirects")
