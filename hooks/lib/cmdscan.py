@@ -45,7 +45,6 @@ LAUNCHERS = {
     "sudo",
     "doas",
     "command",
-    "env",
     "nohup",
     "stdbuf",
     "time",
@@ -54,13 +53,15 @@ LAUNCHERS = {
 }
 # Launchers that carry their own arguments before the wrapped command, so the
 # bare-skip used for `sudo`/`command` would stop at the launcher's own option or
-# duration and miss the real command (`timeout 5 rm ...`, `nice -n 5 rm ...`).
-_ARG_LAUNCHERS = {"timeout", "nice", "xargs"}
+# duration and miss the real command (`timeout 5 rm ...`, `nice -n 5 rm ...`,
+# `env -i rm ...`).
+_ARG_LAUNCHERS = {"timeout", "nice", "xargs", "env"}
 # Option flags of an arg-launcher that consume the *following* token as their
 # value (the `--flag=value` form carries its own value, so no lookahead).
 _LAUNCHER_VALUE_FLAGS = {
     "timeout": {"-k", "--kill-after", "-s", "--signal"},
     "nice": {"-n", "--adjustment"},
+    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
     "xargs": {
         "-n",
         "-I",
@@ -79,6 +80,15 @@ _LAUNCHER_VALUE_FLAGS = {
         "--arg-file",
         "--eof",
     },
+}
+# The single-letter short flags from each launcher's value-flag set. A bundled
+# short flag (`-iu`) takes a separate value only when its *last* letter is one of
+# these (`-iu` is `-i -u`, so `-u` binds the next token); a value letter earlier
+# in the bundle binds the bundle's own tail (`-ui` is `-u i`) and takes no next
+# token.
+_LAUNCHER_VALUE_LETTERS = {
+    launcher: {flag[1] for flag in flags if len(flag) == 2 and flag[0] == "-"}
+    for launcher, flags in _LAUNCHER_VALUE_FLAGS.items()
 }
 # Arg-launchers that take a bare positional (not a flag) before the command --
 # `timeout`'s DURATION. Consumed after the option flags, but only when it looks
@@ -106,10 +116,17 @@ def _skip_launcher_args(seg: list[str], i: int, launcher: str) -> int:
     """
     n = len(seg)
     value_flags = _LAUNCHER_VALUE_FLAGS.get(launcher, set())
+    value_letters = _LAUNCHER_VALUE_LETTERS.get(launcher, set())
     while i < n and seg[i].startswith("-"):
         flag = seg[i]
         i += 1
-        if "=" not in flag and flag in value_flags and i < n:
+        if flag == "--":
+            break
+        is_bundle = len(flag) > 2 and flag[1] != "-"
+        takes_value = (flag in value_flags and "=" not in flag) or (
+            is_bundle and flag[-1] in value_letters
+        )
+        if takes_value and i < n:
             i += 1
     for _ in range(_LAUNCHER_POSITIONALS.get(launcher, 0)):
         if i < n and not seg[i].startswith("-") and _RE_DURATION.match(seg[i]):
@@ -120,10 +137,11 @@ def _skip_launcher_args(seg: list[str], i: int, launcher: str) -> int:
 def command_start(seg: list[str]) -> int:
     """Index of the real command in `seg` after skipping every prefix.
 
-    Skips leading launcher prefixes (`sudo`, `doas`, `command`, `env`, ...),
+    Skips leading launcher prefixes (`sudo`, `doas`, `command`, `nohup`, ...),
     `VAR=value` assignments, brace-group tokens (`{`/`}`), and arg-launchers with
-    their own arguments (`timeout 5`, `nice -n 5`, `xargs`). The returned index
-    may be `len(seg)` when the segment is only prefixes (`}` on its own).
+    their own arguments (`timeout 5`, `nice -n 5`, `xargs`, `env -i`/`env -u X`).
+    The returned index may be `len(seg)` when the segment is only prefixes (`}`
+    on its own).
     """
     i = 0
     n = len(seg)
