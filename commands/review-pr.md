@@ -29,6 +29,13 @@ Review a GitHub pull request with parallel agents, fix findings, and push.
      agents -- comments, tests, error handling, type design, code quality, simplification
    - **Architecture review**: Evaluate system design, module boundaries, dependency direction
    - **Security review**: Check for injection, auth bypass, secret leaks, OWASP top 10
+   - **Voice review** (required whenever the PR touches copy): if the diff adds or edits
+     prose -- user-facing copy, docs, markdown, data-file strings, README/CHANGELOG --
+     run `/writing-voice-review` over the added prose, the PR body, and the branch
+     commit messages. PR/issue bodies and commit messages are always in scope of the
+     standard; published copy that follows an established product voice (e.g. a site's
+     deliberate em-dash style) is judged against that voice -- report the conflict
+     rather than mechanically rewriting.
 
 4. **Collect and deduplicate findings**
 
