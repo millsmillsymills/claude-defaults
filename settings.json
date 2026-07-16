@@ -165,6 +165,15 @@
             "command": "$HOME/.claude/hooks/run-hook.sh log-tool-calls.sh pre"
           }
         ]
+      },
+      {
+        "matcher": "Bash|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/run-hook.sh block-research-env-clobber.py"
+          }
+        ]
       }
     ],
     "PostToolUse": [

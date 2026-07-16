@@ -408,6 +408,39 @@ chmod +x "$locale_norepo/git"
   fail_msg "push: outside-repo under a non-English locale should be allowed (expected rc=0)"
 rm -rf "$fakebin" "$norepo" "$nogit" "$locale_norepo"
 
+# === H9: block-research-env-clobber.py -- whole-file overwrites of the shared
+# central secrets file (~/.config/research/.env), while allowing reads/appends. ===
+ENVG="hooks/block-research-env-clobber.py"
+# Write-tool clobber: synthesize a Write tool-call for $1, echo the exit code.
+env_write_rc() {
+  jq -nc --arg f "$1" '{tool_name:"Write", tool_input:{file_path:$f}}' |
+    "$ENVG" >/dev/null 2>&1
+  echo $?
+}
+# Clobbering forms must block.
+expect_block "$ENVG" 'cp render-research/.env ~/.config/research/.env' "envg cp repo->central"
+expect_block "$ENVG" 'cp .env ~/.config/research/.env && chmod 600 ~/.config/research/.env' "envg cp resync"
+expect_block "$ENVG" 'mv /tmp/x ~/.config/research/.env' "envg mv->central"
+# shellcheck disable=SC2016  # $HOME/$t/$f are the literal command under test, not for this shell to expand
+expect_block "$ENVG" 'f="$HOME/.config/research/.env"; t="$(mktemp)"; echo hi > "$t"; mv "$t" "$f"' "envg var-indirected mv"
+expect_block "$ENVG" 'sed -E "s/x/y/" a > ~/.config/research/.env' "envg truncating redirect"
+expect_block "$ENVG" 'cat x >| ~/.config/research/.env' "envg force redirect >|"
+expect_block "$ENVG" 'cat x | tee ~/.config/research/.env' "envg tee truncate"
+expect_block "$ENVG" 'install -m 600 src ~/.config/research/.env' "envg install->central"
+expect_block "$ENVG" 'rsync -a foo/.env ~/.config/research/.env' "envg rsync->central"
+# Reads, appends, and source-copies must be allowed.
+expect_allow "$ENVG" 'grep -E "^H1_" ~/.config/research/.env' "envg grep read"
+expect_allow "$ENVG" 'source ~/.config/research/.env' "envg source"
+expect_allow "$ENVG" 'printf "K=V\n" >> ~/.config/research/.env' "envg append >>"
+expect_allow "$ENVG" 'tee -a ~/.config/research/.env < x' "envg tee -a append"
+expect_allow "$ENVG" 'cp ~/.config/research/.env ~/backup.env' "envg central as source"
+expect_allow "$ENVG" 'cp render-research/.env.example ~/.config/research/.env.example' "envg .env.example not shared"
+expect_allow "$ENVG" 'echo "cp x ~/.config/research/.env"' "envg quoted literal"
+# Write tool: the central file blocks; .env.example and repo-local .env do not.
+[ "$(env_write_rc '/Users/x/.config/research/.env')" = "2" ] || fail_msg "envg: Write central was allowed (expected block)"
+[ "$(env_write_rc '/Users/x/.config/research/.env.example')" = "0" ] || fail_msg "envg: Write .env.example was blocked (expected allow)"
+[ "$(env_write_rc '/Users/x/Desktop/Projects/render-research/.env')" = "0" ] || fail_msg "envg: Write repo-local .env was blocked (expected allow)"
+
 if [ "$fail" -eq 0 ]; then
   echo "test-guard-hooks: PASS"
 else
