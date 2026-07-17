@@ -50,6 +50,8 @@ No commented-out code -- delete it. Code should be self-documenting; if you need
 
 Evaluate in order: architecture -> code quality -> tests -> performance. Before reviewing, sync to latest remote (`git fetch origin`).
 
+If the diff touches copy -- user-facing strings, docs, markdown, README/CHANGELOG, data-file prose -- also run the `writing-voice-review` skill over the added prose, the PR body, and the branch commit messages. PR/issue bodies and commit messages always follow the voice standard; published copy with an established product voice (e.g. a site's deliberate em-dash style) is judged against that voice -- report conflicts rather than mechanically rewriting.
+
 For each issue: describe concretely with file:line references, present options with tradeoffs when the fix isn't obvious, recommend one, and ask before proceeding.
 
 ## Testing
