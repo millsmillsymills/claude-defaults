@@ -21,7 +21,6 @@
       "Bash(git push --force*)",
       "Bash(git push *--force*)",
       "Bash(git reset --hard*)",
-
       "Edit(~/.bashrc)",
       "Edit(~/.bash_profile)",
       "Edit(~/.bash_login)",
@@ -45,7 +44,6 @@
       "Edit(~/.config/anthropic/**)",
       "Edit(~/.cargo/credentials.toml)",
       "Edit(~/.config/op/**)",
-
       "Write(~/.bashrc)",
       "Write(~/.bash_profile)",
       "Write(~/.bash_login)",
@@ -69,7 +67,6 @@
       "Write(~/.config/anthropic/**)",
       "Write(~/.cargo/credentials.toml)",
       "Write(~/.config/op/**)",
-
       "Read(~/.ssh/**)",
       "Read(~/.gnupg/**)",
       "Read(~/.aws/**)",
@@ -97,18 +94,59 @@
       "Read(~/Library/Application Support/**/solflare*/**)"
     ],
     "allow": [
-      "Bash(rg:*)", "Bash(grep:*)", "Bash(sed:*)", "Bash(awk:*)", "Bash(jq:*)", "Bash(yq:*)",
-      "Bash(fd:*)", "Bash(bat:*)", "Bash(eza:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)",
-      "Bash(tail:*)", "Bash(wc:*)", "Bash(sort:*)", "Bash(uniq:*)", "Bash(tr:*)", "Bash(cut:*)",
-      "Bash(realpath:*)", "Bash(basename:*)", "Bash(dirname:*)", "Bash(which:*)", "Bash(env)",
-      "Bash(printenv:*)", "Bash(pwd)", "Bash(test:*)", "Bash([:*)", "Bash(date)",
-      "Bash(git:*)", "Bash(gh:*)",
-      "Bash(python3:*)", "Bash(uv:*)", "Bash(ruff:*)", "Bash(ty:*)", "Bash(pytest:*)",
-      "Bash(node:*)", "Bash(npx:*)", "Bash(pnpm:*)", "Bash(oxlint:*)", "Bash(oxfmt:*)", "Bash(vitest:*)",
-      "Bash(go:*)", "Bash(gofmt:*)", "Bash(golangci-lint:*)",
-      "Bash(cargo:*)", "Bash(rustc:*)",
-      "Bash(shellcheck:*)", "Bash(shfmt:*)", "Bash(actionlint:*)", "Bash(zizmor:*)", "Bash(prek:*)",
-      "Bash(make:*)", "Bash(trash:*)"
+      "Bash(rg:*)",
+      "Bash(grep:*)",
+      "Bash(sed:*)",
+      "Bash(awk:*)",
+      "Bash(jq:*)",
+      "Bash(yq:*)",
+      "Bash(fd:*)",
+      "Bash(bat:*)",
+      "Bash(eza:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(sort:*)",
+      "Bash(uniq:*)",
+      "Bash(tr:*)",
+      "Bash(cut:*)",
+      "Bash(realpath:*)",
+      "Bash(basename:*)",
+      "Bash(dirname:*)",
+      "Bash(which:*)",
+      "Bash(env)",
+      "Bash(printenv:*)",
+      "Bash(pwd)",
+      "Bash(test:*)",
+      "Bash([:*)",
+      "Bash(date)",
+      "Bash(git:*)",
+      "Bash(gh:*)",
+      "Bash(python3:*)",
+      "Bash(uv:*)",
+      "Bash(ruff:*)",
+      "Bash(ty:*)",
+      "Bash(pytest:*)",
+      "Bash(node:*)",
+      "Bash(npx:*)",
+      "Bash(pnpm:*)",
+      "Bash(oxlint:*)",
+      "Bash(oxfmt:*)",
+      "Bash(vitest:*)",
+      "Bash(go:*)",
+      "Bash(gofmt:*)",
+      "Bash(golangci-lint:*)",
+      "Bash(cargo:*)",
+      "Bash(rustc:*)",
+      "Bash(shellcheck:*)",
+      "Bash(shfmt:*)",
+      "Bash(actionlint:*)",
+      "Bash(zizmor:*)",
+      "Bash(prek:*)",
+      "Bash(make:*)",
+      "Bash(trash:*)"
     ]
   },
   "hooks": {
@@ -163,6 +201,15 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/run-hook.sh log-tool-calls.sh pre"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/run-hook.sh force-worktree-isolation.sh"
           }
         ]
       }
