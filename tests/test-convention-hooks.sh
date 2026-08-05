@@ -148,6 +148,49 @@ printf '%s' "$out" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null 2>
 out=$(run_d '/tmp/project/notes.txt')
 [ -z "$out" ] || fail_msg "D: benign path should emit nothing"
 
+# === Hook E: enforce-session-worktree.sh -- peer-session worktree guard ===
+E="hooks/enforce-session-worktree.sh"
+_e_out="$(mktemp "$TMPHOME/e_out.XXXXXX")"
+
+# A throwaway git repo acts as the shared main checkout.
+E_REPO="$TMPHOME/repo"
+git init -q "$E_REPO" 2>/dev/null
+
+run_e() { # mode sid cwd
+  jq -nc --arg s "$2" --arg d "$3" '{session_id:$s, cwd:$d}' |
+    HOME="$TMPHOME" bash "$E" "$1" >"$_e_out" 2>/dev/null
+}
+
+e_marker() { find "$TMPHOME/.claude/state" -name 'worktree-owner-*' 2>/dev/null | head -1; }
+
+# First session claims the marker silently.
+run_e start E1 "$E_REPO"
+[ -n "$(e_marker)" ] || fail_msg "E: first session did not claim owner marker"
+[ ! -s "$_e_out" ] || fail_msg "E: first session should emit nothing"
+
+# Same session again: silent reclaim, no advisory.
+run_e start E1 "$E_REPO"
+[ ! -s "$_e_out" ] || fail_msg "E: owner re-start should emit nothing"
+
+# A second session in the same checkout gets the worktree advisory.
+run_e start E2 "$E_REPO"
+jq -e '.hookSpecificOutput.additionalContext' "$_e_out" >/dev/null 2>&1 ||
+  fail_msg "E: parallel session did not get worktree advisory"
+
+# The advisory does not steal ownership; end from the owner releases it.
+run_e end E1 "$E_REPO"
+[ -z "$(e_marker)" ] || fail_msg "E: end did not release owner marker"
+
+# After release the next session claims cleanly and silently.
+run_e start E2 "$E_REPO"
+[ ! -s "$_e_out" ] || fail_msg "E: post-release claim should emit nothing"
+run_e end E2 "$E_REPO"
+
+# Outside a git repo: no marker, no output.
+run_e start E3 "$TMPHOME"
+[ -z "$(e_marker)" ] || fail_msg "E: non-repo cwd should not claim a marker"
+[ ! -s "$_e_out" ] || fail_msg "E: non-repo cwd should emit nothing"
+
 echo "convention-hooks: checks ran"
 [ "$fail" -eq 0 ] || {
   echo "FAILED: $fail check(s)" >&2
