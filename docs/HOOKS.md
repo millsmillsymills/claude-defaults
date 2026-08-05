@@ -94,6 +94,10 @@ Forces file-mutating subagents into their own git worktree so parallel sessions 
 - **Explicit opt-out.** A dispatch that already sets `isolation` (`worktree` or `remote`) is left untouched.
 - Fails open: if `jq` is missing or the payload is unparseable it emits nothing and the dispatch proceeds unchanged.
 
+### `enforce-session-worktree.sh start|end` (SessionStart / SessionEnd, exit 0)
+
+Peer-session worktree guard, complementing `force-worktree-isolation.sh`: that hook isolates file-mutating *subagents*; this one covers separately-launched peer `claude` sessions that would otherwise share one main checkout. On `start`, the first session in a repo's main working tree claims an owner marker (`~/.claude/state/worktree-owner-<repo>`); a later session starting in the same checkout while the marker is fresh (< 6h) gets JSON `additionalContext` telling it to work in its own git worktree. On `end`, markers owned by the session are released. Advisory only -- never blocks; a stale marker at worst tells a lone session to use a worktree it does not need. Sessions already in a linked worktree, or outside any git repo, are never touched. **Test:** `bash tests/test-convention-hooks.sh`.
+
 ### `warn-merge-after-pr.sh` (PreToolUse Bash, exit 0)
 
 Non-blocking advisory for the create/merge session-separation convention. On `gh

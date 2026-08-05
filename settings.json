@@ -156,6 +156,10 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/session-heal.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/run-hook.sh enforce-session-worktree.sh start"
           }
         ]
       }
@@ -267,6 +271,10 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/run-hook.sh cleanup-session-markers.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/run-hook.sh enforce-session-worktree.sh end"
           }
         ]
       }
