@@ -50,7 +50,9 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001 -- fail closed + loud
         return fail_closed("block-rm-rf.py", exc)
     if hit:
-        return block("rm -rf is refused. Use `rm -r` or `find <path> -delete` on a specific path")
+        return block(
+            "rm -rf is refused. Use `rm -r` or `find <path> -delete` on a specific path"
+        )
     return 0
 
 
