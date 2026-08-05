@@ -59,7 +59,7 @@ elif [ -f "${CLAUDE_DIR}/settings.json" ]; then
   # the security/logging hooks it dispatches. The hook name appears as a bare
   # argument to run-hook.sh, so match the basename anywhere in the command
   # rather than anchoring on a hooks/ path prefix.
-  for hook_name in run-hook safety-block block-rm-rf block-push-main safety-warn log-tool-calls log-rotate; do
+  for hook_name in run-hook safety-block block-rm-rf block-push-main block-research-env-clobber safety-warn log-tool-calls log-rotate; do
     if echo "$wired" | grep -qE "${hook_name}\.(sh|py)($|[[:space:]])"; then
       pass "settings.json wires ${hook_name}"
     else

@@ -418,7 +418,7 @@ env_write_rc() {
   echo $?
 }
 # Clobbering forms must block.
-expect_block "$ENVG" 'cp render-research/.env ~/.config/research/.env' "envg cp repo->central"
+expect_block "$ENVG" 'cp demo-research/.env ~/.config/research/.env' "envg cp repo->central"
 expect_block "$ENVG" 'cp .env ~/.config/research/.env && chmod 600 ~/.config/research/.env' "envg cp resync"
 expect_block "$ENVG" 'mv /tmp/x ~/.config/research/.env' "envg mv->central"
 # shellcheck disable=SC2016  # $HOME/$t/$f are the literal command under test, not for this shell to expand
@@ -428,18 +428,41 @@ expect_block "$ENVG" 'cat x >| ~/.config/research/.env' "envg force redirect >|"
 expect_block "$ENVG" 'cat x | tee ~/.config/research/.env' "envg tee truncate"
 expect_block "$ENVG" 'install -m 600 src ~/.config/research/.env' "envg install->central"
 expect_block "$ENVG" 'rsync -a foo/.env ~/.config/research/.env' "envg rsync->central"
+# Wrapper bypass: a payload inside bash -c / sh -c / eval must not slip past.
+expect_block "$ENVG" "bash -c 'cp demo-research/.env ~/.config/research/.env'" "envg bash -c wrapper"
+expect_block "$ENVG" "sh -c 'cat a > ~/.config/research/.env'" "envg sh -c wrapper"
+expect_block "$ENVG" 'eval "cp a ~/.config/research/.env"' "envg eval wrapper"
+# Unbalanced quotes re-scan via the de-quoted fallback instead of failing open.
+expect_block "$ENVG" 'cp a ~/.config/research/.env "' "envg unbalanced quote"
+# A directory destination clobbers the file just the same.
+expect_block "$ENVG" 'cp demo-research/.env ~/.config/research/' "envg cp .env into dir"
+expect_block "$ENVG" 'mv -f /tmp/.env ~/.config/research/' "envg mv .env into dir"
+expect_block "$ENVG" 'rsync -a .env ~/.config/research/' "envg rsync .env into dir"
+expect_block "$ENVG" 'cp -t ~/.config/research/ .env' "envg cp -t dir"
+# Path spellings that normalize to the central file.
+expect_block "$ENVG" 'cat x > ~/.config/research/./.env' "envg dot-segment path"
+expect_block "$ENVG" 'cp a ~/.config/research//.env' "envg double-slash path"
+# Other whole-file writers.
+expect_block "$ENVG" 'truncate -s 0 ~/.config/research/.env' "envg truncate"
+expect_block "$ENVG" 'curl -o ~/.config/research/.env https://example.com/x' "envg curl -o"
+expect_block "$ENVG" 'wget -O ~/.config/research/.env https://example.com/x' "envg wget -O"
 # Reads, appends, and source-copies must be allowed.
-expect_allow "$ENVG" 'grep -E "^H1_" ~/.config/research/.env' "envg grep read"
+expect_allow "$ENVG" 'grep -E "^TOKEN_" ~/.config/research/.env' "envg grep read"
 expect_allow "$ENVG" 'source ~/.config/research/.env' "envg source"
 expect_allow "$ENVG" 'printf "K=V\n" >> ~/.config/research/.env' "envg append >>"
 expect_allow "$ENVG" 'tee -a ~/.config/research/.env < x' "envg tee -a append"
+expect_allow "$ENVG" 'tee -ai ~/.config/research/.env < x' "envg tee -ai bundled append"
 expect_allow "$ENVG" 'cp ~/.config/research/.env ~/backup.env' "envg central as source"
-expect_allow "$ENVG" 'cp render-research/.env.example ~/.config/research/.env.example' "envg .env.example not shared"
+expect_allow "$ENVG" 'cp demo-research/.env.example ~/.config/research/.env.example' "envg .env.example not shared"
+expect_allow "$ENVG" 'cp notes.txt ~/.config/research/' "envg non-.env into dir"
 expect_allow "$ENVG" 'echo "cp x ~/.config/research/.env"' "envg quoted literal"
-# Write tool: the central file blocks; .env.example and repo-local .env do not.
+# Write tool: the central file blocks (spelling variants too); .env.example and
+# repo-local .env do not.
 [ "$(env_write_rc '/Users/x/.config/research/.env')" = "2" ] || fail_msg "envg: Write central was allowed (expected block)"
+[ "$(env_write_rc '/Users/x/.config/research/./.env')" = "2" ] || fail_msg "envg: Write dot-segment central was allowed (expected block)"
+[ "$(env_write_rc '/Users/x/.config/research/.env ')" = "2" ] || fail_msg "envg: Write trailing-space central was allowed (expected block)"
 [ "$(env_write_rc '/Users/x/.config/research/.env.example')" = "0" ] || fail_msg "envg: Write .env.example was blocked (expected allow)"
-[ "$(env_write_rc '/Users/x/Desktop/Projects/render-research/.env')" = "0" ] || fail_msg "envg: Write repo-local .env was blocked (expected allow)"
+[ "$(env_write_rc '/Users/x/Desktop/Projects/demo-research/.env')" = "0" ] || fail_msg "envg: Write repo-local .env was blocked (expected allow)"
 
 if [ "$fail" -eq 0 ]; then
   echo "test-guard-hooks: PASS"
