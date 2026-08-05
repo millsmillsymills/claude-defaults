@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# PostToolUse hook (matcher: Task, exit 0): records that a review ran this
-# session by writing a per-session marker when a review subagent completes.
+# SubagentStop hook (exit 0): records that a review ran this session by writing
+# a per-session marker when a review subagent COMPLETES. SubagentStop fires at
+# completion for both synchronous and background (Agent tool) subagents and
+# carries the type in `agent_type`; the previous PostToolUse(Task) wiring never
+# saw background agents finish, so their reviews went unrecorded (#162).
 # gate-public-review.sh requires both a standard and an adversarial marker before
 # it permits an issue/PR write to a public GitHub repo. Never blocks (exit 0).
 #
@@ -14,9 +17,9 @@
 set -uo pipefail
 
 input=$(cat)
-tool=$(printf '%s' "$input" | jq -r '.tool_name // ""' 2>/dev/null || echo "")
-[ "$tool" = "Task" ] || exit 0
-subagent=$(printf '%s' "$input" | jq -r '.tool_input.subagent_type // ""' 2>/dev/null || echo "")
+event=$(printf '%s' "$input" | jq -r '.hook_event_name // ""' 2>/dev/null || echo "")
+[ "$event" = "SubagentStop" ] || exit 0
+subagent=$(printf '%s' "$input" | jq -r '.agent_type // ""' 2>/dev/null || echo "")
 sid=$(printf '%s' "$input" | jq -r '.session_id // ""' 2>/dev/null || echo "")
 [ -n "$subagent" ] || exit 0
 [ -n "$sid" ] || sid="unknown"

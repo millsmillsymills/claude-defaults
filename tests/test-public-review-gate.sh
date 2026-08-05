@@ -50,9 +50,9 @@ state="$TMPHOME/.claude/state"
 
 # === mark-review.sh ===
 M="hooks/mark-review.sh"
-run_mark() { # subagent_type sid
+run_mark() { # agent_type sid
   jq -nc --arg t "$1" --arg s "$2" \
-    '{tool_name:"Task",tool_input:{subagent_type:$t},session_id:$s}' |
+    '{hook_event_name:"SubagentStop",agent_type:$t,session_id:$s}' |
     HOME="$TMPHOME" bash "$M" >/dev/null 2>&1
 }
 
@@ -79,10 +79,11 @@ run_mark 'general-purpose' M6
 [ -f "$state/review-standard-M6" ] && fail_msg "M: general-purpose wrote a standard marker"
 [ -f "$state/review-adversarial-M6" ] && fail_msg "M: general-purpose wrote an adversarial marker"
 
-# Non-Task tool is ignored even with a review-shaped payload.
-jq -nc '{tool_name:"Bash",tool_input:{subagent_type:"code-reviewer"},session_id:"M7"}' |
+# Another hook event is ignored even with a review-shaped payload -- a marker
+# must mean a review subagent COMPLETED, not that one was merely spawned.
+jq -nc '{hook_event_name:"PostToolUse",tool_name:"Agent",tool_input:{subagent_type:"code-reviewer"},session_id:"M7"}' |
   HOME="$TMPHOME" bash "$M" >/dev/null 2>&1
-[ -f "$state/review-standard-M7" ] && fail_msg "M: non-Task tool wrote a marker"
+[ -f "$state/review-standard-M7" ] && fail_msg "M: non-SubagentStop event wrote a marker"
 
 # session_id with path traversal is sanitized into the state dir.
 run_mark 'code-reviewer' '../evil'

@@ -236,9 +236,10 @@
             "command": "$HOME/.claude/hooks/run-hook.sh log-tool-calls.sh post"
           }
         ]
-      },
+      }
+    ],
+    "SubagentStop": [
       {
-        "matcher": "Task",
         "hooks": [
           {
             "type": "command",

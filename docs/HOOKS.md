@@ -20,6 +20,7 @@ Hook **content** can't be regenerated -- symlinks point into this repo, so if a 
 | `PostToolUse` | After a tool call returns | No (already ran) |
 | `UserPromptSubmit` | When user submits a prompt | Yes |
 | `Stop` | When Claude finishes responding | Yes (forces continue) |
+| `SubagentStop` | When a subagent finishes (sync or background) | Yes (forces continue) |
 | `SessionStart` | When a session begins/resumes | No |
 | `SessionEnd` | When a session ends | No |
 
@@ -117,18 +118,22 @@ per-session markers (`review-standard-<sid>`, `review-adversarial-<sid>`) writte
 - **Visibility.** Repo is resolved from an explicit `--repo`/`-R` flag, else the cwd remote; `gh repo view --json visibility` is consulted once per repo per session and cached at `repovis-<sid>-<repo>` (1-day backstop sweep). `PRIVATE`/`INTERNAL` repos are exempt. If visibility can't be confirmed the write is **gated** (fail closed) -- the write needs the same network, so an offline session was going to fail anyway.
 - A blocking message names the missing review(s) and how to satisfy them. Listed in `run-hook.sh`'s `SECURITY_HOOKS`, so a missing gate is logged loudly instead of failing open. **Test:** `bash tests/test-public-review-gate.sh`.
 
-### `mark-review.sh` (PostToolUse Task, exit 0)
+### `mark-review.sh` (SubagentStop, exit 0)
 
 Records that a review ran by writing a per-session marker when a review **subagent
 completes** -- so satisfying `gate-public-review.sh` requires actually dispatching the
-agent, not a bare `touch`. Maps `subagent_type` (plugin namespace stripped, case-insensitive) to a category:
+agent, not a bare `touch`. Wired on `SubagentStop`, which fires at completion for both
+synchronous and background (Agent tool) subagents and carries the type in `agent_type`;
+the old PostToolUse(`Task`) wiring fired at spawn time for background agents and never
+recorded their reviews (#162). Maps `agent_type` (plugin namespace stripped,
+case-insensitive) to a category:
 
 - **standard** -- `code-reviewer`
 - **adversarial** -- `silent-failure-hunter`, `red-team-reviewer`, a security/`security-review` agent, or any subagent whose name reads as security / red-team / adversarial
 
 Running `/pr-review:review-pr` dispatches `code-reviewer` (standard) and
 `silent-failure-hunter` (adversarial), so it satisfies both. Non-review subagents and
-non-`Task` tools write nothing. **Test:** `bash tests/test-public-review-gate.sh`.
+other hook events write nothing. **Test:** `bash tests/test-public-review-gate.sh`.
 
 ### `stop-check-clean-repo.sh` (Stop, command, exit 2 once)
 
