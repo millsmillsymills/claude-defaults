@@ -134,9 +134,7 @@ def _scan_command(cmd: str) -> bool:
         return False
     central_vars = _central_vars(tokens)
     return any(
-        check(seg, central_vars)
-        for seg in _segments(tokens)
-        for check in _CLOBBERS
+        check(seg, central_vars) for seg in _segments(tokens) for check in _CLOBBERS
     )
 
 

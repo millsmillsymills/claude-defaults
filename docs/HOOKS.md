@@ -77,6 +77,14 @@ Patterns warned:
 
 Hard reads/writes to `~/.ssh/`, `~/.aws/`, `~/.gnupg/`, etc. are blocked by the deny rules in `settings.json` regardless of this hook.
 
+### `force-worktree-isolation.sh` (PreToolUse Agent\|Task, exit 0)
+
+Forces file-mutating subagents into their own git worktree so parallel sessions never share the main checkout. On an `Agent`/`Task` dispatch it emits JSON `updatedInput` setting `isolation:"worktree"`; the harness re-runs the tool with the modified input. Never blocks (exit 0).
+
+- **Scope.** Only mutating agents are isolated. Read-only `subagent_type`s are skipped (namespace stripped, case-insensitive): `explore`, `plan`, `claude-code-guide`, `red-team-reviewer`, `statusline-setup`. Everything else -- including the default agent and unknown types -- is isolated, so a misclassified read-only agent only wastes a worktree that auto-removes when unchanged, while a mutating agent is never left in the main checkout.
+- **Explicit opt-out.** A dispatch that already sets `isolation` (`worktree` or `remote`) is left untouched.
+- Fails open: if `jq` is missing or the payload is unparseable it emits nothing and the dispatch proceeds unchanged.
+
 ### `warn-merge-after-pr.sh` (PreToolUse Bash, exit 0)
 
 Non-blocking advisory for the create/merge session-separation convention. On `gh
