@@ -6,7 +6,7 @@ Every hook installed by claude-defaults, what it does, and how to test it. The h
 
 Every command-type hook in `settings.json` is invoked through `run-hook.sh <name> [args]` rather than referencing the script directly (the one exception is `session-heal.sh`, wired directly -- see below). This wrapper plus a `doctor.sh` self-heal step make a missing directory or a renamed/removed hook a non-event instead of a `/bin/sh: ...: No such file or directory` failure.
 
-- **`run-hook.sh` (runtime, in every hook command).** Ensures `logs/` and `hooks/lib/` exist and resolves its own symlink back to the repo, so it can run the real script even when `~/.claude/hooks/<name>` is missing or dangling. It does **not** rewrite symlinks -- repairing the install is `doctor.sh`'s job, not the per-tool-call hot path. If the hook genuinely can't be found it warns on stderr and exits 0 (fails OPEN, so infrastructure breakage never blocks a tool call); a real hook's own exit code (including 2 to block) is propagated unchanged. When the skipped hook is a **security** hook (`safety-block.py`, `block-rm-rf.py`, `block-push-main.py`, `gate-public-review.sh`), or python3 is unavailable for a `.py` hook, the skip is also recorded to `logs/hook-errors.log` and warned loudly -- a never-ran guard must not be silent.
+- **`run-hook.sh` (runtime, in every hook command).** Ensures `logs/` and `hooks/lib/` exist and resolves its own symlink back to the repo, so it can run the real script even when `~/.claude/hooks/<name>` is missing or dangling. It does **not** rewrite symlinks -- repairing the install is `doctor.sh`'s job, not the per-tool-call hot path. If the hook genuinely can't be found it warns on stderr and exits 0 (fails OPEN, so infrastructure breakage never blocks a tool call); a real hook's own exit code (including 2 to block) is propagated unchanged. When the skipped hook is a **security** hook (`safety-block.py`, `block-rm-rf.py`, `block-push-main.py`, `block-research-env-clobber.py`, `gate-public-review.sh`), or python3 is unavailable for a `.py` hook, the skip is also recorded to `logs/hook-errors.log` and warned loudly -- a never-ran guard must not be silent.
 - **`session-heal.sh` (SessionStart).** Wired **directly** (not through `run-hook.sh`) so it can rebuild the wrapper's own symlink if that is what went missing. Runs `doctor.sh --quick`, appending output to `logs/session-heal.log` for a forensic trail, and never blocks startup.
 - **`scripts/doctor.sh` (manual or via SessionStart).** Prunes dangling symlinks under the managed `hooks/`, `hooks/lib/`, `commands/`, `agents/`, and `skills/` dirs (links to vanished repo targets only; foreign links are left alone), then re-links missing content. `--quick` stops there; the default also re-merges `settings.json` from the template (collapsing any duplicated hook groups and picking up renamed hooks). Idempotent. Run it after renaming or removing a hook.
 
@@ -63,6 +63,15 @@ Tokenizes the command with the shared `cmdscan` parser and matches patterns agai
 | Wrapped/separated payloads | any of the above inside `bash -c`/`sh -c`/`eval`, or after an unspaced `;`/`&&`/`\|` |
 
 **Test:** `bash tests/test-guard-hooks.sh`
+
+### `block-research-env-clobber.py` (PreToolUse Bash\|Write, exit 2)
+
+Blocks whole-file overwrites of the central research secrets file (`~/.config/research/.env`), which holds credentials shared across every `*-research` repo -- overwriting it with one repo's `.env` wipes every other repo's keys. Covers `cp`/`mv`/`install`/`rsync`/`ln` with the file *or its directory* as destination (including `-t`/`--target-directory`), truncating redirects (`>`, `>|`, `&>`), `tee`/`sponge` (without `-a`), `truncate`, `dd of=`, `curl -o`/`wget -O`, and the Write tool. Reads, appends (`>>`, `tee -a`), copies *from* the file, `.env.example`, and repo-local `.env` files stay allowed. Shares the `cmdscan` tokenizer (wrapped/unspaced/unbalanced-quote forms covered); path spellings are normalized before matching. **Test:**
+
+```bash
+echo '{"tool_name":"Bash","tool_input":{"command":"cp .env ~/.config/research/.env"}}' | hooks/block-research-env-clobber.py
+# expect: exit 2 with "refusing to overwrite ~/.config/research/.env"
+```
 
 ### `safety-warn.sh` (PreToolUse Edit\|Write, exit 0)
 
