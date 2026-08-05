@@ -20,5 +20,5 @@ hook_events_load() {
       return 0
     fi
   fi
-  HOOK_EVENTS=(PreToolUse PostToolUse Stop SessionEnd UserPromptSubmit)
+  HOOK_EVENTS=(PreToolUse PostToolUse SubagentStop Stop SessionStart SessionEnd UserPromptSubmit)
 }
