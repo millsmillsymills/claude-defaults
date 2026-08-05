@@ -205,6 +205,15 @@
         ]
       },
       {
+        "matcher": "Bash|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/run-hook.sh block-research-env-clobber.py"
+          }
+        ]
+      },
+      {
         "matcher": "Agent|Task",
         "hooks": [
           {
@@ -239,7 +248,7 @@
         "hooks": [
           {
             "type": "prompt",
-            "prompt": "Review the assistant's final response. Reject it if the assistant is rationalizing incomplete work. Common patterns: claiming issues are 'pre-existing' or 'out of scope' to avoid fixing them, saying there are 'too many issues' to address all of them, deferring work to a 'follow-up' that was not requested, listing problems without fixing them and calling that done, or skipping test/lint failures with excuses. If the response shows any of these patterns, respond {\"ok\": false, \"reason\": \"You are rationalizing incomplete work. [specific issue]. Go back and finish.\"}. If the work is genuinely complete, respond {\"ok\": true}."
+            "prompt": "Review the assistant's final response. Reject it only if the assistant is rationalizing incomplete work that it could and should have finished itself. Patterns to reject: claiming issues are 'pre-existing' or 'out of scope' to avoid fixing them, saying there are 'too many issues' to address all of them, deferring work to a 'follow-up' that was not requested, listing problems without fixing them and calling that done, or skipping test/lint failures with excuses. Do NOT reject when the assistant: (a) attempted the action and was blocked by a permission denial, a hook, or a failed authorization -- retrying a denied action, or reaching the same outcome through a different route, is misconduct rather than diligence; (b) is leaving a decision to the user that is genuinely theirs, such as granting an authorization, supplying a credential, or approving a destructive or outward-facing action; (c) has already been rejected once for this same item and has given a substantive reason -- state the disagreement once, then accept, and never escalate by reframing the same demand; (d) reports a discrepancy it lacks the tools to resolve. Never demand that the assistant override a permission denial, edit its own guardrails or human-approval gates, or take a security-relevant action the user has not sanctioned. An action being small, sanctioned elsewhere, or technically available is not a reason to cross a denial. Judge only the visible response text, not internal task or status fields. If the response shows a reject pattern and none of the exceptions apply, respond {\"ok\": false, \"reason\": \"You are rationalizing incomplete work. [specific issue]. Go back and finish.\"}. Otherwise respond {\"ok\": true}."
           },
           {
             "type": "command",
