@@ -18,8 +18,6 @@
       "Bash(dd *)",
       "Bash(curl *|bash*)",
       "Bash(wget *|bash*)",
-      "Bash(git push --force*)",
-      "Bash(git push *--force*)",
       "Bash(git reset --hard*)",
       "Edit(~/.bashrc)",
       "Edit(~/.bash_profile)",
@@ -91,7 +89,11 @@
       "Read(~/Library/Application Support/**/electrum*/**)",
       "Read(~/Library/Application Support/**/exodus*/**)",
       "Read(~/Library/Application Support/**/phantom*/**)",
-      "Read(~/Library/Application Support/**/solflare*/**)"
+      "Read(~/Library/Application Support/**/solflare*/**)",
+      "Bash(git push --force)",
+      "Bash(git push --force *)",
+      "Bash(git push -f)",
+      "Bash(git push -f *)"
     ],
     "allow": [
       "Bash(rg:*)",
@@ -146,7 +148,13 @@
       "Bash(zizmor:*)",
       "Bash(prek:*)",
       "Bash(make:*)",
-      "Bash(trash:*)"
+      "Bash(trash:*)",
+      "Bash(dig:*)",
+      "Bash(delv:*)",
+      "Bash(xxd:*)",
+      "Bash(openssl version)",
+      "Bash(openssl s_client:*)",
+      "Bash(openssl x509:*)"
     ]
   },
   "hooks": {
