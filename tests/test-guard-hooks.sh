@@ -53,6 +53,28 @@ expect_block "$RMRF" "true;rm -rf ./build" "rm-rf after unspaced separator"
 expect_block "$RMRF" $'echo hi\nrm -rf ./build' "rm-rf after newline"
 expect_block "$RMRF" $'echo a\n\nrm -rf ./build' "rm-rf after blank line"
 expect_block "$RMRF" $'echo a|\nrm -rf ./build' "rm-rf after pipe then newline"
+# A launcher's own option argument used to stop the prefix skip at the flag, so
+# the wrapped command went unscanned. `sudo` is backstopped by the Bash(sudo *)
+# deny rule; `ionice`/`watch`/`script` are not.
+expect_block "$RMRF" 'sudo -u root rm -rf /tmp/foo' "rm-rf behind sudo -u"
+expect_block "$RMRF" 'doas -u root rm -rf /tmp/foo' "rm-rf behind doas -u"
+expect_block "$RMRF" 'ionice -c3 rm -rf /tmp/foo' "rm-rf behind ionice -c3"
+expect_block "$RMRF" 'ionice -c 3 -n 7 rm -rf /tmp/foo' "rm-rf behind ionice -c -n"
+expect_block "$RMRF" 'watch rm -rf /tmp/foo' "rm-rf behind watch"
+expect_block "$RMRF" 'watch -n 5 rm -rf /tmp/foo' "rm-rf behind watch -n"
+expect_block "$RMRF" 'chronic rm -rf /tmp/foo' "rm-rf behind chronic"
+expect_block "$RMRF" 'script -q /dev/null rm -rf /tmp/foo' "rm-rf behind script FILE"
+expect_block "$RMRF" "script -c 'rm -rf /tmp/foo' /dev/null" "rm-rf inside script -c"
+expect_allow "$RMRF" 'watch ls -la' "watch benign command"
+expect_allow "$RMRF" 'sudo -u root ls' "sudo -u benign command"
+expect_allow "$RMRF" 'script /tmp/typescript' "script with no wrapped command"
+# find runs its -exec argv itself, mid-argv rather than at command position.
+expect_block "$RMRF" 'find . -name node_modules -exec rm -rf {} +' "rm-rf via find -exec"
+expect_block "$RMRF" 'find . -name x -execdir rm -rf {} +' "rm-rf via find -execdir"
+expect_block "$RMRF" 'find . -name x -exec rm -rf {} \;' "rm-rf via find -exec semicolon"
+expect_block "$RMRF" 'sudo find . -name x -exec rm -rf {} +' "rm-rf via find -exec behind sudo"
+expect_allow "$RMRF" 'find . -name node_modules -print' "find without -exec"
+expect_allow "$RMRF" 'find . -name x -exec ls -l {} +' "find -exec benign command"
 
 # === H1: block-push-main.py -- remotes with digits/dots and refspec forms ===
 PUSH="hooks/block-push-main.py"

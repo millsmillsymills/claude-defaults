@@ -38,30 +38,81 @@ _SHELL_WRAPPERS = {"bash", "sh", "zsh", "dash", "ksh"}
 _REDIRECTS = {">", ">>", "<", "<<", "<<<", "&>", ">&", "1>", "1>>", "2>", "2>>"}
 _MAX_DEPTH = 5
 
-# Launcher prefixes that delegate to the command that follows. Skipping them
-# stops `command rm`, `env git`, `sudo rm` (etc.) from hiding the real command
-# behind a token the checks don't recognize.
+# Launcher prefixes that delegate to the command that follows and take no
+# arguments of their own. Skipping them stops `command rm`, `nohup git` (etc.)
+# from hiding the real command behind a token the checks don't recognize.
 LAUNCHERS = {
-    "sudo",
-    "doas",
     "command",
     "nohup",
     "stdbuf",
     "time",
-    "ionice",
     "setsid",
 }
 # Launchers that carry their own arguments before the wrapped command, so the
-# bare-skip used for `sudo`/`command` would stop at the launcher's own option or
+# bare-skip used for `command`/`nohup` would stop at the launcher's own option or
 # duration and miss the real command (`timeout 5 rm ...`, `nice -n 5 rm ...`,
-# `env -i rm ...`).
-_ARG_LAUNCHERS = {"timeout", "nice", "xargs", "env"}
+# `env -i rm ...`, `sudo -u root rm ...`).
+_ARG_LAUNCHERS = {
+    "timeout",
+    "nice",
+    "xargs",
+    "env",
+    "sudo",
+    "doas",
+    "ionice",
+    "watch",
+    "chronic",
+    "script",
+}
 # Option flags of an arg-launcher that consume the *following* token as their
 # value (the `--flag=value` form carries its own value, so no lookahead).
 _LAUNCHER_VALUE_FLAGS = {
     "timeout": {"-k", "--kill-after", "-s", "--signal"},
     "nice": {"-n", "--adjustment"},
     "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "sudo": {
+        "-u",
+        "--user",
+        "-g",
+        "--group",
+        "-U",
+        "--other-user",
+        "-C",
+        "--close-from",
+        "-h",
+        "--host",
+        "-p",
+        "--prompt",
+        "-r",
+        "--role",
+        "-t",
+        "--type",
+        "-T",
+        "--command-timeout",
+        "-D",
+        "--chdir",
+        "-R",
+        "--chroot",
+    },
+    "doas": {"-a", "-C", "-u"},
+    "ionice": {"-c", "--class", "-n", "--classdata", "-p", "--pid"},
+    "watch": {"-n", "--interval"},
+    "script": {
+        "-t",
+        "--timing",
+        "-T",
+        "--log-timing",
+        "-I",
+        "--log-in",
+        "-O",
+        "--log-out",
+        "-B",
+        "--log-io",
+        "-m",
+        "--logging-format",
+        "-o",
+        "--output-limit",
+    },
     "xargs": {
         "-n",
         "-I",
@@ -91,11 +142,17 @@ _LAUNCHER_VALUE_LETTERS = {
     for launcher, flags in _LAUNCHER_VALUE_FLAGS.items()
 }
 # Arg-launchers that take a bare positional (not a flag) before the command --
-# `timeout`'s DURATION. Consumed after the option flags, but only when it looks
-# like a duration: `timeout rm -rf /etc` (no duration) must not skip `rm` as if
-# it were the DURATION, or the wrapped command goes unchecked.
-_LAUNCHER_POSITIONALS = {"timeout": 1}
+# `timeout`'s DURATION, `script`'s typescript FILE. Consumed after the option
+# flags, and only when the token matches the shape that positional has:
+# `timeout rm -rf /etc` (no duration) must not skip `rm` as if it were the
+# DURATION, or the wrapped command goes unchecked. `script`'s FILE is an
+# arbitrary path, so any non-flag token qualifies -- BSD `script FILE COMMAND`
+# puts the command after it, and util-linux `script` has no trailing-command
+# form for the skip to swallow.
+_LAUNCHER_POSITIONALS = {"timeout": 1, "script": 1}
 _RE_DURATION = re.compile(r"^[0-9]+(\.[0-9]+)?[smhd]?$")
+_RE_ANY = re.compile(r"")
+_LAUNCHER_POSITIONAL_SHAPE = {"timeout": _RE_DURATION, "script": _RE_ANY}
 # A brace group runs its body in the current shell, so `{ rm -rf /etc; }` hides
 # the real command behind a `{` token. The braces are skipped like a launcher.
 _BRACE_GROUP = {"{", "}"}
@@ -128,8 +185,9 @@ def _skip_launcher_args(seg: list[str], i: int, launcher: str) -> int:
         )
         if takes_value and i < n:
             i += 1
+    shape = _LAUNCHER_POSITIONAL_SHAPE.get(launcher, _RE_DURATION)
     for _ in range(_LAUNCHER_POSITIONALS.get(launcher, 0)):
-        if i < n and not seg[i].startswith("-") and _RE_DURATION.match(seg[i]):
+        if i < n and not seg[i].startswith("-") and shape.match(seg[i]):
             i += 1
     return i
 
@@ -259,6 +317,46 @@ def _carries_command_string(token: str) -> bool:
     return len(token) > 1 and token[0] == "-" and token[1] != "-" and "c" in token[1:]
 
 
+# Flags whose argument is itself a command, carried mid-argv rather than as the
+# wrapper's tail. `find -exec`/`-execdir` (and their confirming `-ok` forms) run
+# an argv terminated by `;` or `+`; `script -c` takes the command as one string.
+# Neither sits at `command_start`, so without this the wrapped command is never
+# seen -- `find . -name x -exec rm -rf {} +` scanned only as a `find`.
+_FIND_EXEC_FLAGS = {"-exec", "-execdir", "-ok", "-okdir"}
+_EXEC_TERMINATORS = {";", "+"}
+_COMMAND_STRING_FLAGS = {"script": {"-c", "--command"}}
+
+
+def argv_payloads(seg: list[str]) -> list[str]:
+    """Command strings `seg` runs through a mid-argv flag, as re-scannable text.
+
+    Shared by the balanced (`nested_payloads`) and unbalanced-quote (fallback)
+    paths so the two cannot disagree about what a segment runs.
+    """
+    out: list[str] = []
+    start = command_start(seg)
+    names = {base(token) for token in seg}
+    if start < len(seg) and base(seg[start]) == "find":
+        i = 0
+        while i < len(seg):
+            if seg[i] in _FIND_EXEC_FLAGS:
+                i += 1
+                argv: list[str] = []
+                while i < len(seg) and seg[i] not in _EXEC_TERMINATORS:
+                    argv.append(seg[i])
+                    i += 1
+                if argv:
+                    out.append(" ".join(argv))
+            i += 1
+    for launcher, flags in _COMMAND_STRING_FLAGS.items():
+        if launcher not in names:
+            continue
+        for i, token in enumerate(seg):
+            if token in flags and i + 1 < len(seg):
+                out.append(seg[i + 1])
+    return out
+
+
 def nested_payloads(seg: list[str]):
     """Yield nested command strings carried by `bash -c`/`eval`/... in `seg`.
 
@@ -267,6 +365,7 @@ def nested_payloads(seg: list[str]):
     unwrapped too -- keying on `seg[0]` let any such prefix hide the wrapper and
     smuggle the payload past every check.
     """
+    yield from argv_payloads(seg)
     start = command_start(seg)
     if start >= len(seg):
         return
@@ -320,9 +419,9 @@ def _fallback_segments(cmd: str, depth: int = 0, max_depth: int = _MAX_DEPTH):
         if not seg:
             continue
         yield seg
-        payload = fallback_payload(seg)
-        if payload:
-            yield from _fallback_segments(payload, depth + 1, max_depth)
+        for payload in [*argv_payloads(seg), fallback_payload(seg)]:
+            if payload:
+                yield from _fallback_segments(payload, depth + 1, max_depth)
 
 
 def iter_segments(cmd: str, depth: int = 0, max_depth: int = _MAX_DEPTH):
