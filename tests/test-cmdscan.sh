@@ -111,6 +111,33 @@ for flag in ("-l", "-x", "-i", "--login", "--rcfile"):
   check(list(c.nested_payloads(seg)) == [], f"nested ignores {flag}")
   check(c.fallback_payload(seg) == "", f"fallback ignores {flag}")
 
+# The #147 shape for launchers other than `env`: a launcher's own option argument
+# stopped command_start at the first flag, leaving the wrapped command unscanned.
+check(c.command_start(["sudo", "-u", "root", "rm"]) == 3, "command_start sudo -u USER")
+check(c.command_start(["sudo", "-E", "rm"]) == 2, "command_start sudo boolean flag")
+check(c.command_start(["doas", "-u", "root", "rm"]) == 3, "command_start doas -u USER")
+check(c.command_start(["ionice", "-c", "3", "rm"]) == 3, "command_start ionice -c CLASS")
+check(c.command_start(["ionice", "-c3", "rm"]) == 2, "command_start ionice attached -c3")
+check(c.command_start(["watch", "-n", "5", "rm"]) == 3, "command_start watch -n SECS")
+check(c.command_start(["chronic", "-e", "rm"]) == 2, "command_start chronic")
+# `script`'s typescript FILE is an arbitrary path, so its positional skip takes
+# any non-flag token -- unlike `timeout`, whose DURATION must look like one.
+check(c.command_start(["script", "-q", "/dev/null", "rm"]) == 3, "command_start script FILE")
+check(c.command_start(["script", "-t", "log", "/dev/null", "rm"]) == 4, "command_start script -t LOG FILE")
+
+# argv_payloads pulls out a command carried mid-argv, which sits at neither
+# command_start nor the wrapper tail: `find -exec ARGV ;|+` and `script -c STR`.
+check(c.argv_payloads(["find", ".", "-exec", "rm", "-rf", "{}", "+"]) == ["rm -rf {}"], "argv find -exec")
+check(c.argv_payloads(["find", ".", "-execdir", "rm", "-rf", "{}"]) == ["rm -rf {}"], "argv find -execdir unterminated")
+check(c.argv_payloads(["sudo", "find", ".", "-exec", "rm", "-rf", "{}", "+"]) == ["rm -rf {}"], "argv find behind launcher")
+check(c.argv_payloads(["find", ".", "-print"]) == [], "argv find without -exec")
+check(c.argv_payloads(["script", "-c", "rm -rf /etc", "/dev/null"]) == ["rm -rf /etc"], "argv script -c")
+check(c.argv_payloads(["ls", "-c", "x"]) == [], "argv -c outside a command-string launcher")
+# Both scan paths must recurse into it -- balanced and unbalanced-quote alike, or
+# the fallback becomes the bypass (the #142 lesson).
+check(["rm", "-rf", "/etc"] in list(c.iter_segments("find . -exec rm -rf /etc +")), "iter_segments find -exec")
+check(["rm", "-rf", "/etc"] in list(c.iter_segments("find . -exec rm -rf '/etc +")), "fallback recurses into find -exec")
+
 # The fallback path must also fail closed past the depth bound, not silently drop
 # the inner command (the balanced path raises; the fallback must match).
 try:
