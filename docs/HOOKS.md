@@ -40,7 +40,7 @@ Blocks any `rm -rf` (recursive+force) invocation -- broader than `safety-block.p
 
 ```bash
 echo '{"tool_input":{"command":"rm -rf /tmp"}}' | hooks/block-rm-rf.py
-# expect: exit 2 with "BLOCKED: Use trash instead of rm -rf"
+# expect: exit 2 with "BLOCKED: rm -rf is refused. ..."
 ```
 
 ### `block-push-main.py` (PreToolUse Bash, exit 2)

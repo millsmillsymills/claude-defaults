@@ -78,7 +78,6 @@ When adding dependencies, CI actions, or tool versions, always look up the curre
 | `zizmor` | - | `zizmor .github/workflows/` - Actions security audit |
 | `prek` | pre-commit | `prek run` - fast git hooks (Rust, no Python) |
 | `wt` | git worktree | `wt switch branch` - manage parallel worktrees |
-| `trash` | rm | `trash file` - moves to Trash (recoverable). Never use `rm -rf` |
 
 Prefer ast-grep over ripgrep when searching for code structure (function calls, class definitions, imports, pattern matching across arguments). Use ripgrep for literal strings and log messages.
 

@@ -84,6 +84,8 @@ SAFETY="hooks/safety-block.py"
 expect_block "$SAFETY" 'rm -rf /Users/somebody' "safety combined root"
 expect_block "$SAFETY" 'rm -r -f /Users/somebody' "safety split-flag root"
 expect_block "$SAFETY" 'rm --recursive --force ~' "safety long-option home"
+expect_block "$SAFETY" 'rm -rf /home/somebody' "safety linux home child"
+expect_block "$SAFETY" 'rm -rf /root' "safety linux root home"
 expect_allow "$SAFETY" 'rm -rf /tmp/scratch' "safety non-root path"
 expect_allow "$SAFETY" 'echo "rm -rf /"' "safety quoted literal"
 # Recursive flag + protected target from unrelated commands must not combine.

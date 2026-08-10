@@ -466,7 +466,8 @@ def _is_force_push(seg: list[str]) -> bool:
 _CHECKS: list[tuple] = [
     (
         _is_rm_rf_protected,
-        "rm -rf against root, /Users, ~, or $HOME. Use 'trash' or a specific path.",
+        "rm -rf against /, a home root (/Users, /home, /root), ~, or $HOME. "
+        "Delete a specific path instead.",
     ),
     (
         _is_sudo_rm_rf,

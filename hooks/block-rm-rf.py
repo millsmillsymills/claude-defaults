@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse(Bash) hook: block any `rm -rf`, point at `trash` instead.
+"""PreToolUse(Bash) hook: block any `rm -rf`, point at a deliberate delete instead.
 
 Broader than safety-block.py (which only blocks `rm -rf` against protected
 paths): this enforces the project policy that *no* recursive-force delete should
@@ -50,7 +50,9 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001 -- fail closed + loud
         return fail_closed("block-rm-rf.py", exc)
     if hit:
-        return block("Use trash instead of rm -rf")
+        return block(
+            "rm -rf is refused. Use `rm -r` or `find <path> -delete` on a specific path"
+        )
     return 0
 
 
