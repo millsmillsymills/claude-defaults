@@ -27,17 +27,24 @@ python3 -m json.tool <mcp-template.json >/dev/null 2>&1 || {
   exit 1
 }
 
-# 4. permissions.deny blocks Edit/Write on every shell init file a login shell sources
+# 4. permissions.deny blocks edits to every shell init file a login shell sources.
+# Edit(path) covers all file-editing tools; a Write(path) rule is never matched and
+# Claude Code warns about it at startup.
 deny=$(jq -r '.permissions.deny[]' settings.json)
 for f in .bashrc .bash_profile .bash_login .profile .zshrc .zprofile .zshenv; do
-  for action in Edit Write; do
-    entry="$action(~/$f)"
-    if ! grep -qxF "$entry" <<<"$deny"; then
-      echo "FAIL: settings.json permissions.deny missing $entry" >&2
-      fail=$((fail + 1))
-    fi
-  done
+  entry="Edit(~/$f)"
+  if ! grep -qxF "$entry" <<<"$deny"; then
+    echo "FAIL: settings.json permissions.deny missing $entry" >&2
+    fail=$((fail + 1))
+  fi
 done
+
+# 5. no Write(path) deny rules — they are inert and emit a startup warning
+if grep -q '^Write(' <<<"$deny"; then
+  echo "FAIL: settings.json permissions.deny has inert Write(path) rules; use Edit(path)" >&2
+  grep '^Write(' <<<"$deny" >&2
+  fail=$((fail + 1))
+fi
 
 [ "$fail" = "0" ] || exit 1
 echo "test-settings-valid: PASS"
