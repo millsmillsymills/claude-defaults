@@ -220,11 +220,13 @@ Pin actions to SHA hashes with version comments: `actions/checkout@<full-sha> # 
 
 ### Dependency updates
 
-Renovate, not Dependabot. One `renovate.json` per repo, with `"minimumReleaseAge": "7 days"` as the supply-chain cooldown, grouping and scheduling expressed as `packageRules`, and `"extends": ["helpers:pinGitHubActionDigests"]` so a SHA-pinned action keeps its version comment current. An action pinned to a bare SHA with no version comment is skipped, which is another reason to write the comment.
+Renovate, not Dependabot. One `renovate.json` per repo, with `"minimumReleaseAge": "7 days"` as the supply-chain cooldown, and grouping and scheduling expressed as `packageRules` rather than a fixed set of keys. Resolve the cooldown per package when auditing: a preset in `extends` can supply it, and the last matching `packageRules` entry can lower or null it.
 
-For Python, the `pep621` manager reads `pyproject.toml`; set `"lockFileMaintenance": {"enabled": true}` (off by default) so `uv.lock` is refreshed by uv rather than the manifest being bumped alone.
+`"extends": ["helpers:pinGitHubActionDigests"]` converts a tag reference to a digest; keeping the version comment current on an already-pinned action is the manager's default behaviour, not something the preset adds. An action pinned to a bare SHA with **no** version comment is skipped entirely, so that repo silently receives no action updates: write the comment, and grep for bare pins (`uses:\s+\S+@[0-9a-f]{40}\s*$`) rather than trusting that strict-looking pins are being maintained.
 
-Renovate is a GitHub App rather than a built-in, so it needs installing per repo. Grant it the repos you mean, never "All repositories". Merge its pull requests with `/merge-renovate <owner/repo>`.
+For Python, the presence of `uv.lock` is what tells Renovate uv is in use, and the `pep621` manager then updates `pyproject.toml` and `uv.lock` together. Set `"lockFileMaintenance": {"enabled": true}` (off by default) to refresh transitive pins on a schedule as well. Note what that buys and what it does not: Renovate documents `lockFileMaintenance` as unable to enforce `minimumReleaseAge`, because the regeneration is delegated to the package manager, so a lock-file refresh can pull versions published inside the cooldown. Treat those pull requests as review-worthy rather than routine.
+
+Renovate is a GitHub App rather than a built-in, so it needs installing per repo. Grant it the repos you mean, never "All repositories". Merge its pull requests with `/merge-renovate <owner/repo>`, which treats PR bodies as untrusted text because Renovate renders upstream release notes into them.
 
 ## Workflow
 
