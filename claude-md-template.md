@@ -216,7 +216,15 @@ All scripts must start with `set -euo pipefail`. Lint: `shellcheck script.sh && 
 
 ### GitHub Actions
 
-Pin actions to SHA hashes with version comments: `actions/checkout@<full-sha> # vX.Y.Z` (use `persist-credentials: false`). Scan workflows with `zizmor` before committing. Configure Dependabot with 7-day cooldowns and grouped updates. Use uv ecosystem (not pip) for Python projects so Dependabot updates `uv.lock`.
+Pin actions to SHA hashes with version comments: `actions/checkout@<full-sha> # vX.Y.Z` (use `persist-credentials: false`). Scan workflows with `zizmor` before committing.
+
+### Dependency updates
+
+Renovate, not Dependabot. One `renovate.json` per repo, with `"minimumReleaseAge": "7 days"` as the supply-chain cooldown, grouping and scheduling expressed as `packageRules`, and `"extends": ["helpers:pinGitHubActionDigests"]` so a SHA-pinned action keeps its version comment current. An action pinned to a bare SHA with no version comment is skipped, which is another reason to write the comment.
+
+For Python, the `pep621` manager reads `pyproject.toml`; set `"lockFileMaintenance": {"enabled": true}` (off by default) so `uv.lock` is refreshed by uv rather than the manifest being bumped alone.
+
+Renovate is a GitHub App rather than a built-in, so it needs installing per repo. Grant it the repos you mean, never "All repositories". Merge its pull requests with `/merge-renovate <owner/repo>`.
 
 ## Workflow
 
