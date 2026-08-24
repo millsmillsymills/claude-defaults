@@ -216,7 +216,17 @@ All scripts must start with `set -euo pipefail`. Lint: `shellcheck script.sh && 
 
 ### GitHub Actions
 
-Pin actions to SHA hashes with version comments: `actions/checkout@<full-sha> # vX.Y.Z` (use `persist-credentials: false`). Scan workflows with `zizmor` before committing. Configure Dependabot with 7-day cooldowns and grouped updates. Use uv ecosystem (not pip) for Python projects so Dependabot updates `uv.lock`.
+Pin actions to SHA hashes with version comments: `actions/checkout@<full-sha> # vX.Y.Z` (use `persist-credentials: false`). Scan workflows with `zizmor` before committing.
+
+### Dependency updates
+
+Renovate, not Dependabot. One `renovate.json` per repo, with `"minimumReleaseAge": "7 days"` as the supply-chain cooldown, and grouping and scheduling expressed as `packageRules` rather than a fixed set of keys. Resolve the cooldown per package when auditing: a preset in `extends` can supply it, and the last matching `packageRules` entry can lower or null it.
+
+`"extends": ["helpers:pinGitHubActionDigests"]` converts a tag reference to a digest; keeping the version comment current on an already-pinned action is the manager's default behaviour, not something the preset adds. An action pinned to a bare SHA with **no** version comment is skipped entirely, so that repo silently receives no action updates: write the comment, and grep for bare pins (`uses:\s+\S+@[0-9a-f]{40}\s*$`) rather than trusting that strict-looking pins are being maintained.
+
+For Python, the presence of `uv.lock` is what tells Renovate uv is in use, and the `pep621` manager then updates `pyproject.toml` and `uv.lock` together. Set `"lockFileMaintenance": {"enabled": true}` (off by default) to refresh transitive pins on a schedule as well. Note what that buys and what it does not: Renovate documents `lockFileMaintenance` as unable to enforce `minimumReleaseAge`, because the regeneration is delegated to the package manager, so a lock-file refresh can pull versions published inside the cooldown. Treat those pull requests as review-worthy rather than routine.
+
+Renovate is a GitHub App rather than a built-in, so it needs installing per repo. Grant it the repos you mean, never "All repositories". Merge its pull requests with `/merge-renovate <owner/repo>`, which treats PR bodies as untrusted text because Renovate renders upstream release notes into them.
 
 ## Workflow
 
