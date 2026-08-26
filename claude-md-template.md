@@ -74,7 +74,7 @@ When adding dependencies, CI actions, or tool versions, always look up the curre
 | `ast-grep` | - | `ast-grep --pattern '$FUNC($$)' --lang py` - AST-based code search |
 | `shellcheck` | - | `shellcheck script.sh` - shell script linter |
 | `shfmt` | - | `shfmt -i 2 -w script.sh` - shell formatter |
-| `actionlint` | - | `actionlint .github/workflows/` - GitHub Actions linter |
+| `actionlint` | - | `actionlint` - GitHub Actions linter, run bare from the repo root; it finds the workflows itself. A directory argument fails with "is a directory" and lints nothing |
 | `zizmor` | - | `zizmor .github/workflows/` - Actions security audit |
 | `prek` | pre-commit | `prek run` - fast git hooks (Rust, no Python) |
 | `wt` | git worktree | `wt switch branch` - manage parallel worktrees |
