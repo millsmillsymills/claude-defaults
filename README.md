@@ -314,7 +314,7 @@ Custom slash commands are markdown files that define parameterized procedures. T
 mkdir -p ~/.claude/commands
 cp commands/review-pr.md ~/.claude/commands/
 cp commands/fix-issue.md ~/.claude/commands/
-cp commands/merge-dependabot.md ~/.claude/commands/
+cp commands/merge-renovate.md ~/.claude/commands/
 ```
 
 ### Review PR
@@ -325,9 +325,9 @@ cp commands/merge-dependabot.md ~/.claude/commands/
 
 `commands/fix-issue.md` -- Takes a GitHub issue and autonomously completes it -- researches, plans, implements, tests, creates a PR, self-reviews, and comments on the issue when done. Invoke with `/fix-issue 123` where 123 is the issue number.
 
-### Merge Dependabot
+### Merge Renovate
 
-`commands/merge-dependabot.md` -- Evaluates and merges open Dependabot PRs for a repo. Audits dependabot config, builds a transitive dependency map, batches overlapping PRs, evaluates each in parallel, and merges passing PRs sequentially with post-merge re-testing. Invoke with `/merge-dependabot owner/repo`.
+`commands/merge-renovate.md` -- Evaluates and merges open Renovate PRs for a repo. Audits the `renovate.json` it finds, builds a transitive dependency map across grouped PRs, batches overlapping ones, evaluates each in parallel, and merges passing PRs sequentially with post-merge re-testing. Invoke with `/merge-renovate owner/repo`.
 
 ---
 
@@ -375,7 +375,7 @@ claude-defaults/
 ├── commands/
 │   ├── review-pr.md                # /review-pr <number>
 │   ├── fix-issue.md                # /fix-issue <number>
-│   └── merge-dependabot.md         # /merge-dependabot <owner/repo>
+│   └── merge-renovate.md           # /merge-renovate <owner/repo>
 ├── agents/                         # scaffold for global agents (empty)
 ├── skills/                         # scaffold for global skills (empty)
 ├── docs/

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "timezone": "America/Los_Angeles",
+  "minimumReleaseAge": "7 days",
+  "packageRules": [
+    {
+      "description": "The only manager with anything to update here: one workflow, actions SHA-pinned with a version comment.",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions",
+      "schedule": ["before 9am on monday"]
+    },
+    {
+      "description": "A major is a read, not a batch item.",
+      "matchUpdateTypes": ["major"],
+      "groupName": null,
+      "dependencyDashboardApproval": true
+    }
+  ]
+}
