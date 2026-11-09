@@ -9,3 +9,6 @@ __pycache__/
 .claude/worktrees/
 .context/
 .compound-engineering/
+
+# Claude Code local settings can contain machine-specific permissions and secrets.
+**/.claude/settings.local.json
