@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 
 from cmdscan import (  # noqa: E402  # ty: ignore[unresolved-import]
     DepthLimitExceeded as _DepthLimitExceeded,
+    argv_payloads as _argv_payloads,
     base as _base,
     command_start as _command_start,
     fallback_payload as _fallback_payload,
@@ -514,8 +515,9 @@ def _fallback_scan(cmd: str, depth: int = 0) -> str | None:
         reason = _check_segment(seg)
         if reason:
             return reason
-        payload = _fallback_payload(seg)
-        if payload:
+        for payload in [*_argv_payloads(seg), _fallback_payload(seg)]:
+            if not payload:
+                continue
             reason = _fallback_scan(payload, depth + 1)
             if reason:
                 return reason
